@@ -108,8 +108,8 @@ class PinkConfig:
     BORDER_THIN = 2        # 细边框
 
     # ==================== 字体设置 ====================
-
-    FONT_FAMILY = 'Microsoft YaHei UI'
+    # 使用系统可用的中文字体，优先选择顺序
+    FONT_FAMILY = ('WenQuanYi Micro Hei', 'Noto Sans CJK SC', 'Droid Sans Fallback', 'SimHei', 'Microsoft YaHei UI', 'Arial', 'sans-serif')
 
     FONT_TITLE = (FONT_FAMILY, 24, 'bold')
 
