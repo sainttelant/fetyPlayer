@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Banana Player - 视频列表{% endblock %}
+
+{% block content %}
+<div class="home-container">
+    <!-- 左侧分类栏 -->
+    <aside class="sidebar">
+        <nav class="categories">
+            <a href="{{ url_for('index') }}" class="category-item active">
+                <span class="category-icon">🏠</span>
+                <span class="category-name">首页</span>
+            </a>
+            <a href="#" class="category-item">
+                <span class="category-icon">🔥</span>
+                <span class="category-name">热门</span>
+            </a>
+            <a href="#" class="category-item">
+                <span class="category-icon">🎵</span>
+                <span class="category-name">音乐</span>
+            </a>
+            <a href="#" class="category-item">
+                <span class="category-icon">🎮</span>
+                <span class="category-name">游戏</span>
+            </a>
+            <a href="#" class="category-item">
+                <span class="category-icon">🎬</span>
+                <span class="category-name">电影</span>
+            </a>
+            <a href="#" class="category-item">
+                <span class="category-icon">📺</span>
+                <span class="category-name">直播</span>
+            </a>
+        </nav>
+        
+        <div class="sidebar-section">
+            <h3 class="sidebar-title">关于我们</h3>
+            <p class="sidebar-text">Banana Player 是一个支持 .ban 格式视频的播放器网站，采用粉红少女风格设计。</p>
+        </div>
+    </aside>
+    
+    <!-- 右侧视频列表 -->
+    <section class="video-grid">
+        {% if search_query %}
+            <div class="search-header">
+                <h2>搜索结果: "{{ search_query }}"</h2>
+                <span class="video-count">找到 {{ videos|length }} 个视频</span>
+            </div>
+        {% endif %}
+        
+        {% if videos %}
+            <div class="video-list">
+                {% for video in videos %}
+                    <a href="{{ url_for('watch', filename=video.filename) }}" class="video-card">
+                        <div class="video-thumbnail">
+                            <div class="thumbnail-placeholder">
+                                <span class="play-icon">▶</span>
+                            </div>
+                            <div class="video-badge">
+                                {% if video.ext == 'ban' %}
+                                    <span class="badge ban-badge">.BAN</span>
+                                {% else %}
+                                    <span class="badge ext-badge">{{ video.ext|upper }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="video-info">
+                            <h3 class="video-title">{{ video.name }}</h3>
+                            <div class="video-meta">
+                                {% if video.ext == 'ban' %}
+                                    <span class="meta-item">{{ video.width }}x{{ video.height }}</span>
+                                    <span class="meta-item">{{ video.fps }} FPS</span>
+                                    <span class="meta-item">{{ video.frame_count }} 帧</span>
+                                {% else %}
+                                    <span class="meta-item">{{ video.ext|upper }} 视频</span>
+                                {% endif %}
+                            </div>
+                            <div class="video-duration">
+                                {% if video.ext == 'ban' %}
+                                    {{ "%.1f"|format(video.duration) }} 秒
+                                {% else %}
+                                    {{ (video.size / (1024*1024))|round(2) }} MB
+                                {% endif %}
+                            </div>
+                        </div>
+                    </a>
+                {% endfor %}
+            </div>
+            
+            <!-- 分页 -->
+            {% if total_pages > 1 %}
+                <div class="pagination">
+                    {% if page > 1 %}
+                        <a href="{{ url_for('index', page=page-1) }}" class="page-btn">上一页</a>
+                    {% endif %}
+                    
+                    <span class="page-info">第 {{ page }} / {{ total_pages }} 页</span>
+                    
+                    {% if page < total_pages %}
+                        <a href="{{ url_for('index', page=page+1) }}" class="page-btn">下一页</a>
+                    {% endif %}
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">📹</div>
+                <h3>暂无视频</h3>
+                <p>上传视频开始您的播放之旅吧！</p>
+                <a href="{{ url_for('upload') }}" class="upload-link">上传视频</a>
+            </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

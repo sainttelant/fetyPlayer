@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}观看: {{ video_info.name|default(filename) }}{% endblock %}
+
+{% block content %}
+<div class="watch-container">
+    <div class="watch-main">
+        <!-- 视频播放器 -->
+        <div class="player-wrapper">
+            <div id="video-player" class="video-player">
+                <div class="player-placeholder">
+                    <div class="loading-spinner"></div>
+                    <p>正在加载视频...</p>
+                </div>
+            </div>
+            <div class="player-controls">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="controls-row">
+                    <div class="controls-left">
+                        <button class="control-btn" id="play-btn" title="播放/暂停">
+                            <span class="play-icon">▶</span>
+                        </button>
+                        <button class="control-btn" id="prev-btn" title="上一帧">
+                            <span class="prev-icon">⏮</span>
+                        </button>
+                        <button class="control-btn" id="next-btn" title="下一帧">
+                            <span class="next-icon">⏭</span>
+                        </button>
+                        <div class="volume-control">
+                            <button class="control-btn" id="mute-btn" title="静音">
+                                <span class="volume-icon">🔊</span>
+                            </button>
+                            <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="100">
+                        </div>
+                        <span class="time-display" id="time-display">0:00 / 0:00</span>
+                    </div>
+                    <div class="controls-right">
+                        <button class="control-btn" id="fullscreen-btn" title="全屏">
+                            <span class="fullscreen-icon">⛶</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 视频信息 -->
+        <div class="video-details">
+            <h1 class="video-title">{{ video_info.name|default(filename) }}</h1>
+            <div class="video-stats">
+                {% if not video_info.is_standard %}
+                    <span class="stat-item">{{ video_info.width }}x{{ video_info.height }}</span>
+                    <span class="stat-item">{{ video_info.fps }} FPS</span>
+                    <span class="stat-item">{{ video_info.frame_count }} 帧</span>
+                    <span class="stat-item">约 {{ "%.1f"|format(video_info.duration) }} 秒</span>
+                    <span class="ban-badge">.BAN 格式</span>
+                {% else %}
+                    <span class="stat-item">标准视频格式</span>
+                {% endif %}
+            </div>
+            
+            <div class="video-actions">
+                <a href="{{ url_for('index') }}" class="action-btn back-btn">
+                    <span>← 返回首页</span>
+                </a>
+                <button class="action-btn share-btn" id="share-btn">
+                    <span>分享</span>
+                </button>
+            </div>
+            
+            <div class="video-description">
+                <h3>视频说明</h3>
+                <p>这是使用 Banana Player 制作的 .ban 格式加密视频，采用 AES-256 强加密保护。</p>
+                <p>支持的格式: .ban (加密视频), .mp4, .avi, .mov 等标准视频格式。</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 右侧推荐列表 -->
+    <aside class="recommendations">
+        <h3 class="recommendations-title">相关视频</h3>
+        <div class="recommendation-list">
+            <a href="{{ url_for('index') }}" class="recommendation-item">
+                <div class="rec-thumbnail">
+                    <span>🏠</span>
+                </div>
+                <div class="rec-info">
+                    <h4>查看更多视频</h4>
+                    <span>返回首页</span>
+                </div>
+            </a>
+        </div>
+    </aside>
+</div>
+
+<!-- 隐藏的 video 元素用于标准视频 -->
+{% if video_info.is_standard %}
+<video id="standard-video" style="display: none;">
+    <source src="{{ url_for('serve_video', filename=filename) }}" type="video/mp4">
+    您的浏览器不支持视频播放。
+</video>
+{% endif %}
+
+<script>
+    // 初始化播放器配置
+    window.videoConfig = {
+        filename: '{{ filename }}',
+        isBanFormat: {% if video_info.is_standard %}false{% else %}true{% endif %},
+        fps: {{ video_info.fps|default(30) }},
+        frameCount: {{ video_info.frame_count|default(0) }},
+        duration: {{ video_info.duration|default(0) }}
+    };
+</script>
+{% endblock %}
