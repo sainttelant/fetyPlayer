@@ -24,13 +24,14 @@ class BananaPlayerPink:
         self.root = root
         self.root.title(PinkConfig.APP_NAME)
         self.root.geometry(f"{PinkConfig.WINDOW_WIDTH}x{PinkConfig.WINDOW_HEIGHT}")
+        self.root.minsize(800, 600)  # 设置最小尺寸
         # Set gradient background
         self.setup_gradient_background()
         # Create menu bar
         self.create_menu_bar()
         # Initialize license manager
         self.license_manager = LicenseManager()
-        # Video state variables
+        # Initialize video state variables
         self.current_video = None
         self.frames = []
         self.metadata = None
@@ -38,12 +39,14 @@ class BananaPlayerPink:
         self.is_playing = False
         self.play_thread = None
         self.seeking = False  # Prevent progress bar recursive update
+        self.original_video_size = None  # Store original video resolution
         # Create UI
         self.setup_ui()
         # Check license status
         self.check_license_status()
-        # Start heart animation
-        self.animate_hearts()
+        # Start heart animation (after setup_ui so self.hearts is initialized)
+        self.init_hearts_and_animate()
+        # Bind window resize event for video auto-resize
         
     def setup_gradient_background(self):
         """Set gradient background"""
@@ -110,6 +113,9 @@ class BananaPlayerPink:
         self.create_info_bar(main_frame)
         # Add heart decorations
         self.add_heart_decorations()
+        
+        # 绑定窗口大小变化事件，用于自适应视频大小
+        self.root.bind('<Configure>', self._on_window_resize)
         
     def create_header(self, parent):
         """Create header title bar"""
@@ -240,13 +246,30 @@ class BananaPlayerPink:
         )
         info_frame.create_window(500, 20, window=self.info_label)
         
+    def _on_window_resize(self, event=None):
+        """窗口大小变化时自适应调整视频显示"""
+        # 使用防抖，避免频繁重绘
+        if hasattr(self, '_resize_job') and self._resize_job:
+            self.root.after_cancel(self._resize_job)
+        
+        if self.frames and self.current_frame_idx < len(self.frames):
+            self._resize_job = self.root.after(100, self._refresh_frame)
+    
+    def _refresh_frame(self):
+        """刷新当前帧（用于窗口大小变化时）"""
+        if self.frames and self.current_frame_idx < len(self.frames):
+            self.display_frame(self.current_frame_idx, force=True)
+        self._resize_job = None
+    
     def add_heart_decorations(self):
-        """Add heart decorations"""
+        """Add heart decorations to background"""
         self.hearts = []
-        for x, y in PinkConfig.HEART_POSITIONS:
-            heart = create_heart_decoration(self.bg_canvas, x, y, size=PinkConfig.HEART_SIZE)
-            self.hearts.append(heart)
-            
+        
+    def init_hearts_and_animate(self):
+        """Initialize hearts and start animation"""
+        self.add_heart_decorations()
+        self.animate_hearts()
+        
     def animate_hearts(self):
         """Heart pulsing animation"""
         import random
@@ -278,19 +301,14 @@ class BananaPlayerPink:
             filetypes=[("Banana video", f"*{PinkConfig.BAN_EXTENSION}"), ("All files", "*.*")]
         )
         if file_path:
-            print(f"[DEBUG] 用户选择的文件: {file_path}")
             try:
                 self.info_label.config(text="Loading video... Please wait...")
                 self.root.update()
-                print(f"[DEBUG] 开始解码视频文件...")
                 self.metadata, self.frames = BANCodec.decode_video(file_path)
-                print(f"[DEBUG] ✅ 视频解码完成!")
-                print(f"[DEBUG] 元数据: {self.metadata}")
-                print(f"[DEBUG] 帧数量: {len(self.frames)}")
                 
                 # 检查是否有有效帧数据
                 if not self.frames:
-                    messagebox.showerror("Error", "视频文件解析成功，但没有有效的帧数据！\n可能是文件损坏或格式不兼容。")
+                    messagebox.showerror("Error", "No valid frame data in video file!")
                     self.info_label.config(text="Error: No valid frames")
                     return
                     
@@ -299,29 +317,25 @@ class BananaPlayerPink:
                 self.progress.config(to=len(self.frames)-1)
                 
                 # 显示视频信息
-                info_text = (f"✅ Loaded: {os.path.basename(file_path)} | "
+                info_text = (f"Loaded: {os.path.basename(file_path)} | "
                            f"{self.metadata['width']}x{self.metadata['height']} | "
-                           f"{self.metadata['fps']} FPS | "
-                           f"{len(self.frames)} frames")
+                           f"{self.metadata['fps']} FPS | {len(self.frames)} frames")
                 self.info_label.config(text=info_text)
-                print(f"[DEBUG] 视频信息: {info_text}")
+                
+                # 根据视频分辨率调整窗口大小
+                self._adjust_window_to_video_size()
                 
                 # 显示第一帧
-                self.display_frame(0)
-                print(f"[DEBUG] ✅ 第一帧已显示!")
+                self.display_frame(0, force=True)
                 
-                # 弹出成功提示框
-                messagebox.showinfo("Success", f"视频加载成功！\n\n文件: {os.path.basename(file_path)}\n分辨率: {self.metadata['width']}x{self.metadata['height']}\n帧率: {self.metadata['fps']} FPS\n帧数: {len(self.frames)}")
+                messagebox.showinfo("Success", f"Video loaded successfully!\n\nFile: {os.path.basename(file_path)}\nResolution: {self.metadata['width']}x{self.metadata['height']}\nFPS: {self.metadata['fps']} FPS\nFrames: {len(self.frames)}")
                 
             except Exception as e:
-                print(f"[DEBUG] ❌ 加载视频出错: {e}")
-                import traceback
-                traceback.print_exc()
                 messagebox.showerror("Error", f"Cannot open video: {str(e)}")
                 self.info_label.config(text="Error loading video")
                 
     def convert_video(self):
-        """Convert video to .ban format"""
+        """Convert video to .ban format (with encryption)"""
         input_path = filedialog.askopenfilename(
             title="Select video to convert",
             filetypes=PinkConfig.SUPPORTED_INPUT_FORMATS
@@ -338,31 +352,104 @@ class BananaPlayerPink:
                     self.root.update()
                     BANCodec.encode_video(input_path, output_path)
                     self.info_label.config(text="Conversion complete!")
-                    messagebox.showinfo("Success", f"Video converted successfully!\nSaved to: {output_path}")
+                    messagebox.showinfo("Success", f"Video converted and encrypted successfully!\nSaved to: {output_path}")
                 except Exception as e:
                     messagebox.showerror("Error", f"Conversion failed: {str(e)}")
                     
-    def display_frame(self, frame_idx):
+    def _adjust_window_to_video_size(self):
+        """根据视频分辨率调整窗口大小以适应播放内容"""
+        if not self.metadata:
+            return
+            
+        video_w = self.metadata['width']
+        video_h = self.metadata['height']
+        self.original_video_size = (video_w, video_h)
+        
+        # 计算目标窗口尺寸（保留一定边距用于UI控件）
+        ui_reserve_w = 100  # 左右边距
+        ui_reserve_h = 200  # 上下边距（头部、控制栏等）
+        
+        target_w = video_w + ui_reserve_w
+        target_h = video_h + ui_reserve_h
+        
+        # 获取屏幕尺寸
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        
+        # 如果视频太大，调整为屏幕尺寸的90%
+        if target_w > screen_w * 0.9 or target_h > screen_h * 0.9:
+            scale = min(screen_w * 0.9 / target_w, screen_h * 0.9 / target_h)
+            target_w = int(target_w * scale)
+            target_h = int(target_h * scale)
+        
+        # 最小窗口尺寸
+        min_w = 800
+        min_h = 600
+        target_w = max(target_w, min_w)
+        target_h = max(target_h, min_h)
+        
+        # 调整窗口大小并居中
+        self.root.geometry(f"{target_w}x{target_h}")
+        
+        self.info_label.config(text=f"Window adjusted to: {target_w}x{target_h}")
+    
+    def _keep_video_proportion(self):
+        """播放过程中保持视频比例适配窗口"""
+        if not self.original_video_size or not self.frames:
+            return
+            
+        # 重新计算视频显示尺寸
+        if self.current_frame_idx < len(self.frames):
+            self.display_frame(self.current_frame_idx, force=True)
+    
+    def display_frame(self, frame_idx, force=False):
         """Display specified frame"""
         if not self.frames or frame_idx >= len(self.frames) or frame_idx < 0:
             return
 
         frame = self.frames[frame_idx]
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # Resize to fit canvas
+        
+        # 获取当前画布大小
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        
+        # 如果画布大小未知，使用默认尺寸
+        if canvas_w <= 1:
+            canvas_w = 950
+        if canvas_h <= 1:
+            canvas_h = 420
+        
+        # 保持宽高比缩放图像
         img = Image.fromarray(frame_rgb)
-        img = img.resize((950, 420), Image.Resampling.LANCZOS)
+        
+        # 计算缩放尺寸，保持原始宽高比
+        orig_w, orig_h = img.size
+        target_ratio = canvas_w / canvas_h
+        orig_ratio = orig_w / orig_h
+        
+        if orig_ratio > target_ratio:
+            # 图像更宽，以宽度为基准
+            new_w = canvas_w
+            new_h = int(canvas_w / orig_ratio)
+        else:
+            # 图像更高，以高度为基准
+            new_h = canvas_h
+            new_w = int(canvas_h * orig_ratio)
+        
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         photo = ImageTk.PhotoImage(image=img)
         
         # 保存引用到self，防止被垃圾回收
         if not hasattr(self, 'current_photo') or self.current_photo is None:
             self.current_photo = []
         self.current_photo.append(photo)
+        # 限制保存的引用数量，避免内存泄漏
+        if len(self.current_photo) > 10:
+            self.current_photo = self.current_photo[-10:]
         
         self.canvas.delete("all")
-        # 视频画布现在占满整个容器，图像居中显示
-        canvas_w = self.canvas.winfo_width() or 950
-        canvas_h = self.canvas.winfo_height() or 420
+        # 图像居中显示
         self.canvas.create_image(canvas_w//2, canvas_h//2, image=photo, anchor=tk.CENTER)
         # 强制刷新canvas
         self.canvas.update_idletasks()
