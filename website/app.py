@@ -23,11 +23,142 @@ app.config.from_pyfile('config.py')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 
+# ==================== 用户权限和播放限制 ====================
+
+class UserSession:
+    """用户会话管理"""
+    def __init__(self):
+        self.is_premium = False
+        self.watch_time_limit = 15  # 非会员15秒限制
+        self.session_start = None
+        
+    def check_watch_limit(self, current_time):
+        """检查观看时间限制"""
+        if self.is_premium:
+            return True, None  # 会员无限制
+        
+        if self.session_start is None:
+            self.session_start = current_time
+            return True, None
+        
+        elapsed = current_time - self.session_start
+        if elapsed >= self.watch_time_limit:
+            return False, f"非会员用户只能观看{self.watch_time_limit}秒，请升级会员解锁完整功能"
+        
+        return True, None
+
+# 全局用户会话（简化版本，实际应用中应使用数据库和session）
+user_sessions = {}
+
+def get_user_session(request):
+    """获取用户会话"""
+    client_ip = request.remote_addr
+    if client_ip not in user_sessions:
+        user_sessions[client_ip] = UserSession()
+    return user_sessions[client_ip]
+
 # ==================== P0阶段 - 核心API ====================
+
+def decode_frame_from_file(filepath, frame_idx):
+    """从文件中解码单帧的辅助函数"""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from src.config import PinkConfig
+    from src.codec import decrypt_aes, calculate_checksum, ENCRYPTION_ENABLED, derive_key_from_salt, deobfuscate_data
+    import hashlib
+    
+    # 读取并解码单帧
+    with open(filepath, 'rb') as f:
+        # 跳过文件头（magic, salt, iv）
+        magic = deobfuscate_data(f.read(4))
+        salt = deobfuscate_data(f.read(32))
+        iv = deobfuscate_data(f.read(16))
+        
+        # 派生加密密钥
+        master_key = derive_key_from_salt(salt)
+        
+        # 跳过视频信息头
+        f.read(16)
+        
+        # 读取帧大小表
+        sizes_len = struct.unpack('I', f.read(4))[0]
+        encrypted_sizes = f.read(sizes_len)
+        
+        # 解密帧大小表
+        if ENCRYPTION_ENABLED:
+            sizes_packet = decrypt_aes(encrypted_sizes, master_key, iv)
+            if sizes_packet is None:
+                raise Exception(f'帧大小表解密失败，密钥长度={len(master_key)}, IV长度={len(iv)}, 数据长度={len(encrypted_sizes)}')
+        else:
+            sizes_packet = encrypted_sizes
+        
+        # 解析帧大小
+        sizes_data_bytes = sizes_packet[16:]
+        frame_sizes = [int(s) for s in sizes_data_bytes[4:].decode('utf-8').split(',') if s]
+        
+        # 计算帧数据起始位置
+        frame_data_offset = f.tell()
+        
+        # 计算目标帧位置
+        offset = frame_data_offset
+        for i in range(frame_idx):
+            if i >= len(frame_sizes):
+                raise IndexError(f"帧索引超出范围: {frame_idx} >= {len(frame_sizes)}")
+            offset += frame_sizes[i]
+        
+        # 读取并解密目标帧
+        f.seek(offset)
+        frame_size = frame_sizes[frame_idx]
+        if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
+            raise Exception(f"无效的帧大小: {frame_size}")
+        
+        encrypted_frame = f.read(frame_size)
+        if len(encrypted_frame) < frame_size:
+            raise Exception("帧数据不完整")
+        
+        # 解密帧
+        if ENCRYPTION_ENABLED:
+            frame_packet = decrypt_aes(encrypted_frame, master_key, iv)
+        else:
+            frame_packet = encrypted_frame
+        
+        if not frame_packet:
+            raise Exception('帧解密失败')
+        
+        # 验证校验和
+        frame_checksum = frame_packet[4:20]
+        frame_data = frame_packet[20:]
+        if calculate_checksum(frame_data) != frame_checksum:
+            raise Exception('帧数据校验失败')
+        
+        # 解码帧
+        nparr = np.frombuffer(frame_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            raise Exception('帧解码失败')
+        
+        # 转换为base64
+        is_success, buffer = cv2.imencode('.jpg', frame, 
+                                         [cv2.IMWRITE_JPEG_QUALITY, PinkConfig.JPEG_QUALITY])
+        if not is_success:
+            raise Exception('帧编码失败')
+        
+        frame_base64 = base64.b64encode(buffer.tobytes()).decode('utf-8')
+        
+        return {
+            'success': True,
+            'frame_idx': frame_idx,
+            'frame_data': f'data:image/jpeg;base64,{frame_base64}',
+            'width': frame.shape[1],
+            'height': frame.shape[0],
+            'channels': frame.shape[2] if len(frame.shape) > 2 else 1,
+            'size_kb': len(buffer) / 1024
+        }
+
 
 @app.route('/api/video/<filename>/frame/<int:frame_idx>')
 def get_video_frame(filename, frame_idx):
-    """获取单帧数据（P0阶段）
+    """获取单帧数据（P0阶段）- 带15秒限制
     
     Args:
         filename: 视频文件名
@@ -52,109 +183,38 @@ def get_video_frame(filename, frame_idx):
     try:
         info = BANCodec.get_video_info(filepath)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'无法读取视频信息: {str(e)}'}), 500
     
     # 检查帧索引范围
     if frame_idx < 0 or frame_idx >= info['frame_count']:
         return jsonify({'error': f'帧索引超出范围: {frame_idx} >= {info["frame_count"]}'}), 400
     
+    # 检查观看时间限制
+    user_session = get_user_session(request)
+    current_time = frame_idx / info['fps']  # 当前帧对应的时间
+    can_watch, limit_msg = user_session.check_watch_limit(current_time)
+    if not can_watch:
+        return jsonify({'error': limit_msg, 'limit_reached': True}), 403
+    
     # 解码单帧
     try:
-        from src.config import PinkConfig
-        from src.codec import calculate_checksum
-        from src.license_manager import decrypt_aes, ENCRYPTION_ENABLED
-        
-        # 读取并解码单帧
-        with open(filepath, 'rb') as f:
-            # 跳过文件头（magic, salt, iv）
-            magic = f.read(4)
-            salt = f.read(32)
-            iv = f.read(16)
-            
-            # 跳过视频信息头
-            f.read(16)
-            
-            # 读取帧大小表
-            sizes_len = struct.unpack('I', f.read(4))[0]
-            encrypted_sizes = f.read(sizes_len)
-            
-            # 解密帧大小表
-            if ENCRYPTION_ENABLED:
-                sizes_packet = decrypt_aes(encrypted_sizes, BANCodec._derive_key(salt), iv)
-            else:
-                sizes_packet = encrypted_sizes
-            
-            # 解析帧大小
-            sizes_data_bytes = sizes_packet[16:]
-            frame_sizes = [int(s) for s in sizes_data_bytes[4:].decode('utf-8').split(',') if s]
-            
-            # 计算帧数据起始位置
-            frame_data_offset = f.tell()
-            
-            # 计算目标帧位置
-            offset = frame_data_offset
-            for i in range(frame_idx):
-                if i >= len(frame_sizes):
-                    raise IndexError(f"帧索引超出范围: {frame_idx} >= {len(frame_sizes)}")
-                offset += frame_sizes[i]
-            
-            # 读取并解密目标帧
-            f.seek(offset)
-            frame_size = frame_sizes[frame_idx]
-            if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
-                raise Exception(f"无效的帧大小: {frame_size}")
-            
-            encrypted_frame = f.read(frame_size)
-            if len(encrypted_frame) < frame_size:
-                raise Exception("帧数据不完整")
-            
-            # 解密帧
-            if ENCRYPTION_ENABLED:
-                frame_packet = decrypt_aes(encrypted_frame, BANCodec._derive_key(salt), iv)
-            else:
-                frame_packet = encrypted_frame
-            
-            if not frame_packet:
-                return jsonify({'error': '帧解密失败'}), 500
-            
-            # 验证校验和
-            frame_checksum = frame_packet[4:20]
-            frame_data = frame_packet[20:]
-            if calculate_checksum(frame_data) != frame_checksum:
-                return jsonify({'error': '帧数据校验失败'}), 500
-            
-            # 解码帧
-            nparr = np.frombuffer(frame_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if frame is None:
-                return jsonify({'error': '帧解码失败'}), 500
-            
-            # 转换为base64
-            is_success, buffer = cv2.imencode('.jpg', frame, 
-                                             [cv2.IMWRITE_JPEG_QUALITY, PinkConfig.JPEG_QUALITY])
-            if not is_success:
-                return jsonify({'error': '帧编码失败'}), 500
-            
-            frame_base64 = base64.b64encode(buffer).decode('utf-8')
-            
-            return jsonify({
-                'success': True,
-                'frame_idx': frame_idx,
-                'frame_data': f'data:image/jpeg;base64,{frame_base64}',
-                'width': frame.shape[1],
-                'height': frame.shape[0],
-                'channels': frame.shape[2] if len(frame.shape) > 2 else 1,
-                'size_kb': len(buffer) / 1024
-            })
-            
+        result = decode_frame_from_file(filepath, frame_idx)
+        result['watch_limit'] = {
+            'can_watch': True,
+            'remaining_time': max(0, user_session.watch_time_limit - current_time)
+        }
+        return jsonify(result)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'帧解码错误: {str(e)}'}), 500
 
 
 @app.route('/api/video/<filename>/frames/<int:start>/<int:end>')
 def get_video_frames(filename, start, end):
-    """批量获取帧数据（P0阶段）
+    """批量获取帧数据（P0阶段）- 带15秒限制
     
     Args:
         filename: 视频文件名
@@ -194,21 +254,19 @@ def get_video_frames(filename, start, end):
     if (end - start) > max_batch_size:
         return jsonify({'error': f'批量获取帧数超过限制: {max_batch_size} 帧'}), 400
     
+    # 检查观看时间限制（检查结束帧的时间）
+    user_session = get_user_session(request)
+    end_time = end / info['fps']
+    can_watch, limit_msg = user_session.check_watch_limit(end_time)
+    if not can_watch:
+        return jsonify({'error': limit_msg, 'limit_reached': True}), 403
+    
     # 解码所有帧
     frames = []
     for frame_idx in range(start, end):
         try:
             # 获取单帧数据
-            frame_response_data = get_video_frame.__wrapped__(filename, frame_idx)
-            
-            if 'success' not in frame_response_data[0]:
-                frames.append({
-                    'frame_idx': frame_idx,
-                    'error': frame_response_data[0].get('error', '未知错误')
-                })
-                continue
-            
-            frame_data = frame_response_data[0]
+            frame_data = decode_frame_from_file(filepath, frame_idx)
             frames.append({
                 'frame_idx': frame_idx,
                 'frame_data': frame_data['frame_data'],
@@ -228,7 +286,11 @@ def get_video_frames(filename, start, end):
         'start': start,
         'end': end,
         'count': len(frames),
-        'frames': frames
+        'frames': frames,
+        'watch_limit': {
+            'can_watch': True,
+            'remaining_time': max(0, user_session.watch_time_limit - end_time)
+        }
     })
 
 
@@ -392,6 +454,23 @@ def index():
                           page=page,
                           total_pages=((len(videos) + per_page - 1) // per_page) if videos else 1)
 
+
+@app.route('/test')
+def test_player():
+    """测试播放器页面"""
+    return render_template('test_player.html')
+
+@app.route('/debug')
+def debug_player():
+    """调试播放器页面"""
+    return render_template('debug_player.html')
+
+@app.route('/minimal')
+def minimal_test():
+    """最小Canvas测试页面"""
+    return render_template('minimal_test.html')
+    """测试播放器页面"""
+    return render_template('test_player.html')
 
 @app.route('/watch/<filename>')
 def watch(filename):

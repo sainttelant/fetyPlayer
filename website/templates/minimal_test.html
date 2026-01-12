@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>最小Canvas测试</title>
+    <style>
+        body { margin: 20px; font-family: Arial; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        canvas { border: 2px solid #ff69b4; background: #000; display: block; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        #log { background: #f5f5f5; padding: 10px; margin: 10px 0; height: 200px; overflow-y: scroll; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>最小Canvas渲染测试</h1>
+    
+    <div class="test-section">
+        <h2>测试1: 单帧Canvas渲染</h2>
+        <button onclick="testSingleFrame()">加载并显示第0帧</button>
+        <canvas id="canvas1" width="854" height="480"></canvas>
+        <div id="log1"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试2: 多帧动画</h2>
+        <button onclick="testAnimation()">加载前5帧并播放</button>
+        <canvas id="canvas2" width="854" height="480"></canvas>
+        <div id="log2"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试3: 动态尺寸Canvas</h2>
+        <button onclick="testDynamicSize()">加载并自动调整Canvas尺寸</button>
+        <canvas id="canvas3" style="width: 100%; max-width: 1200px;"></canvas>
+        <div id="log3"></div>
+    </div>
+    
+    <div id="log"></div>
+
+    <script>
+        const mainLog = document.getElementById('log');
+        
+        function log(msg, targetLog = mainLog) {
+            const time = new Date().toLocaleTimeString();
+            targetLog.innerHTML += `<div>[${time}] ${msg}</div>`;
+            targetLog.scrollTop = targetLog.scrollHeight;
+            console.log(msg);
+        }
+        
+        // 测试1: 单帧渲染
+        async function testSingleFrame() {
+            const canvas = document.getElementById('canvas1');
+            const ctx = canvas.getContext('2d');
+            const log1 = document.getElementById('log1');
+            
+            log('开始测试单帧渲染...', log1);
+            
+            try {
+                const response = await fetch('/api/video/vis.ban/frame/0');
+                const data = await response.json();
+                
+                log(`收到帧数据: ${data.width}x${data.height}`, log1);
+                
+                const img = new Image();
+                img.onload = () => {
+                    log(`图像加载成功: ${img.naturalWidth}x${img.naturalHeight}`, log1);
+                    
+                    // 固定Canvas尺寸
+                    canvas.width = 854;
+                    canvas.height = 480;
+                    
+                    // 清除并绘制
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    
+                    log('✓ 单帧绘制完成', log1);
+                };
+                
+                img.onerror = (e) => {
+                    log(`✗ 图像加载失败: ${e}`, log1);
+                };
+                
+                img.src = data.frame_data;
+                
+            } catch (error) {
+                log(`✗ 测试失败: ${error.message}`, log1);
+            }
+        }
+        
+        // 测试2: 多帧动画
+        let frames2 = [];
+        let currentFrame2 = 0;
+        let animationId2 = null;
+        
+        async function testAnimation() {
+            const canvas = document.getElementById('canvas2');
+            const ctx = canvas.getContext('2d');
+            const log2 = document.getElementById('log2');
+            
+            log('开始测试多帧动画...', log2);
+            
+            try {
+                const response = await fetch('/api/video/vis.ban/frames/0/5');
+                const data = await response.json();
+                
+                log(`收到 ${data.frames.length} 帧数据`, log2);
+                
+                frames2 = [];
+                const loadPromises = data.frames.map(frame => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            img.frameIdx = frame.frame_idx;
+                            resolve(img);
+                        };
+                        img.onerror = () => reject(new Error('加载失败'));
+                        img.src = frame.frame_data;
+                    });
+                });
+                
+                frames2 = await Promise.all(loadPromises);
+                frames2.sort((a, b) => a.frameIdx - b.frameIdx);
+                
+                log(`成功加载 ${frames2.length} 帧`, log2);
+                
+                // 固定Canvas尺寸
+                canvas.width = 854;
+                canvas.height = 480;
+                
+                // 开始动画
+                currentFrame2 = 0;
+                animate2();
+                
+            } catch (error) {
+                log(`✗ 测试失败: ${error.message}`, log2);
+            }
+        }
+        
+        function animate2() {
+            if (frames2.length === 0) return;
+            
+            const canvas = document.getElementById('canvas2');
+            const ctx = canvas.getContext('2d');
+            const log2 = document.getElementById('log2');
+            
+            const frame = frames2[currentFrame2];
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+            
+            log(`绘制帧 ${currentFrame2}`, log2);
+            
+            currentFrame2 = (currentFrame2 + 1) % frames2.length;
+            animationId2 = requestAnimationFrame(() => {
+                setTimeout(() => animate2(), 100); // 10fps
+            });
+        }
+        
+        // 测试3: 动态尺寸Canvas
+        let frames3 = [];
+        let currentFrame3 = 0;
+        let animationId3 = null;
+        
+        async function testDynamicSize() {
+            const canvas = document.getElementById('canvas3');
+            const log3 = document.getElementById('log3');
+            
+            log('开始测试动态尺寸Canvas...', log3);
+            
+            try {
+                const response = await fetch('/api/video/vis.ban/frames/0/5');
+                const data = await response.json();
+                
+                log(`收到 ${data.frames.length} 帧数据`, log3);
+                
+                frames3 = [];
+                const loadPromises = data.frames.map(frame => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            img.frameIdx = frame.frame_idx;
+                            img.width = frame.width;
+                            img.height = frame.height;
+                            log(`帧 ${frame.frame_idx} 加载: ${img.naturalWidth}x${img.naturalHeight}`, log3);
+                            resolve(img);
+                        };
+                        img.onerror = () => reject(new Error('加载失败'));
+                        img.src = frame.frame_data;
+                    });
+                });
+                
+                frames3 = await Promise.all(loadPromises);
+                frames3.sort((a, b) => a.frameIdx - b.frameIdx);
+                
+                log(`成功加载 ${frames3.length} 帧`, log3);
+                
+                // 使用第一帧的尺寸设置Canvas
+                const firstFrame = frames3[0];
+                canvas.width = firstFrame.width;
+                canvas.height = firstFrame.height;
+                
+                log(`Canvas尺寸设置为: ${canvas.width}x${canvas.height}`, log3);
+                
+                // 开始动画
+                currentFrame3 = 0;
+                animate3();
+                
+            } catch (error) {
+                log(`✗ 测试失败: ${error.message}`, log3);
+            }
+        }
+        
+        function animate3() {
+            if (frames3.length === 0) return;
+            
+            const canvas = document.getElementById('canvas3');
+            const ctx = canvas.getContext('2d');
+            const log3 = document.getElementById('log3');
+            
+            const frame = frames3[currentFrame3];
+            
+            // 调整Canvas尺寸（如果需要）
+            if (canvas.width !== frame.width || canvas.height !== frame.height) {
+                canvas.width = frame.width;
+                canvas.height = frame.height;
+                ctx = canvas.getContext('2d'); // 重新获取context
+                log(`Canvas尺寸调整为: ${canvas.width}x${canvas.height}`, log3);
+            }
+            
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+            
+            currentFrame3 = (currentFrame3 + 1) % frames3.length;
+            animationId3 = requestAnimationFrame(() => {
+                setTimeout(() => animate3(), 100); // 10fps
+            });
+        }
+        
+        log('页面加载完成');
+    </script>
+</body>
+</html>

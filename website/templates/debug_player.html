@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>播放器调试</title>
+    <style>
+        body { margin: 20px; font-family: Arial; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        canvas { border: 2px solid #ff69b4; background: #000; }
+        .debug { background: #f5f5f5; padding: 10px; margin: 10px 0; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>播放器逐步调试</h1>
+    
+    <div class="section">
+        <h2>步骤1: 测试API数据</h2>
+        <button onclick="testAPI()">测试API获取帧数据</button>
+        <div id="api-result" class="debug"></div>
+    </div>
+    
+    <div class="section">
+        <h2>步骤2: 测试图像加载</h2>
+        <button onclick="testImageLoad()">测试单张图片加载</button>
+        <div id="image-result" class="debug"></div>
+        <canvas id="test-canvas" width="800" height="600"></canvas>
+    </div>
+    
+    <div class="section">
+        <h2>步骤3: 测试多帧加载</h2>
+        <button onclick="testMultipleFrames()">加载多帧测试</button>
+        <div id="frames-result" class="debug"></div>
+        <canvas id="multi-canvas" width="800" height="600"></canvas>
+        <div style="margin-top: 10px;">
+            <button onclick="playFrames()">播放</button>
+            <button onclick="stopFrames()">停止</button>
+            <span id="frame-info">帧数: 0</span>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>步骤4: 测试完整播放器</h2>
+        <button onclick="initFullPlayer()">初始化完整播放器</button>
+        <div id="full-player-container" style="margin-top: 10px;">
+            <canvas id="full-player-canvas" width="800" height="600" style="width: 100%;"></canvas>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>调试日志</h2>
+        <div id="debug-log" class="debug" style="max-height: 300px; overflow-y: scroll;"></div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('debug-log');
+        
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML += `<div>[${time}] ${msg}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+        
+        // 步骤1: 测试API
+        async function testAPI() {
+            log('开始测试API...');
+            const resultEl = document.getElementById('api-result');
+            resultEl.innerHTML = '正在获取...';
+            
+            try {
+                const response = await fetch('/api/video/vis.ban/info');
+                const data = await response.json();
+                log(`视频信息: ${JSON.stringify(data.info)}`);
+                
+                const frameResponse = await fetch('/api/video/vis.ban/frame/0');
+                const frameData = await frameResponse.json();
+                
+                log(`单帧API响应: success=${frameData.success}, width=${frameData.width}, height=${frameData.height}`);
+                log(`帧数据前100字符: ${frameData.frame_data.substring(0, 100)}...`);
+                
+                resultEl.innerHTML = `
+                    <p>✓ API调用成功</p>
+                    <p>帧数: ${data.info.frame_count}</p>
+                    <p>尺寸: ${frameData.width}x${frameData.height}</p>
+                `;
+            } catch (error) {
+                log(`API测试失败: ${error.message}`);
+                resultEl.innerHTML = `<p>✗ 失败: ${error.message}</p>`;
+            }
+        }
+        
+        // 步骤2: 测试图像加载
+        async function testImageLoad() {
+            log('开始测试图像加载...');
+            const resultEl = document.getElementById('image-result');
+            const canvas = document.getElementById('test-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            resultEl.innerHTML = '正在加载...';
+            
+            try {
+                const response = await fetch('/api/video/vis.ban/frame/0');
+                const data = await response.json();
+                
+                log('创建Image对象...');
+                const img = new Image();
+                img.onload = () => {
+                    log(`图像加载成功: ${img.width}x${img.height}`);
+                    log(`自然尺寸: ${img.naturalWidth}x${img.naturalHeight}`);
+                    
+                    // 设置Canvas尺寸
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    log(`Canvas尺寸设置为: ${canvas.width}x${canvas.height}`);
+                    
+                    // 绘制图像
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    log('图像已绘制到Canvas');
+                    
+                    resultEl.innerHTML = `<p>✓ 图像加载并绘制成功</p><p>尺寸: ${img.naturalWidth}x${img.naturalHeight}</p>`;
+                };
+                
+                img.onerror = (e) => {
+                    log(`图像加载失败: ${e}`);
+                    resultEl.innerHTML = `<p>✗ 图像加载失败</p>`;
+                };
+                
+                log('开始加载图像数据...');
+                img.src = data.frame_data;
+                
+            } catch (error) {
+                log(`图像测试失败: ${error.message}`);
+                resultEl.innerHTML = `<p>✗ 失败: ${error.message}</p>`;
+            }
+        }
+        
+        // 步骤3: 测试多帧
+        let frames = [];
+        let isPlaying = false;
+        let currentFrame = 0;
+        let animationId = null;
+        
+        async function testMultipleFrames() {
+            log('开始测试多帧加载...');
+            const resultEl = document.getElementById('frames-result');
+            resultEl.innerHTML = '正在加载...';
+            frames = [];
+            
+            try {
+                const response = await fetch('/api/video/vis.ban/frames/0/5');
+                const data = await response.json();
+                
+                log(`收到 ${data.frames.length} 帧数据`);
+                
+                // 加载所有帧
+                const loadPromises = data.frames.map((frame, index) => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            log(`帧 ${frame.frame_idx} 加载成功: ${img.naturalWidth}x${img.naturalHeight}`);
+                            img.frameIdx = frame.frame_idx;
+                            resolve(img);
+                        };
+                        img.onerror = () => reject(new Error(`帧${frame.frame_idx}加载失败`));
+                        img.src = frame.frame_data;
+                    });
+                });
+                
+                frames = await Promise.all(loadPromises);
+                frames.sort((a, b) => a.frameIdx - b.frameIdx);
+                
+                log(`成功加载 ${frames.length} 帧`);
+                
+                // 显示第一帧
+                const canvas = document.getElementById('multi-canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = frames[0].naturalWidth;
+                canvas.height = frames[0].naturalHeight;
+                ctx.drawImage(frames[0], 0, 0, canvas.width, canvas.height);
+                
+                document.getElementById('frame-info').textContent = `已加载: ${frames.length} 帧`;
+                resultEl.innerHTML = `<p>✓ 加载 ${frames.length} 帧成功</p>`;
+                
+            } catch (error) {
+                log(`多帧测试失败: ${error.message}`);
+                resultEl.innerHTML = `<p>✗ 失败: ${error.message}</p>`;
+            }
+        }
+        
+        function playFrames() {
+            if (frames.length === 0) {
+                log('没有可播放的帧');
+                return;
+            }
+            
+            isPlaying = true;
+            currentFrame = 0;
+            log('开始播放...');
+            animateFrames();
+        }
+        
+        function stopFrames() {
+            isPlaying = false;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            log('停止播放');
+        }
+        
+        function animateFrames() {
+            if (!isPlaying) return;
+            
+            const canvas = document.getElementById('multi-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            const frame = frames[currentFrame];
+            if (frame) {
+                ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+                log(`播放帧 ${currentFrame}`);
+            }
+            
+            currentFrame = (currentFrame + 1) % frames.length;
+            
+            animationId = requestAnimationFrame(() => {
+                setTimeout(() => animateFrames(), 100); // 10fps
+            });
+        }
+        
+        // 步骤4: 完整播放器测试
+        let playerFrames = [];
+        let playerCurrentFrame = 0;
+        let playerIsPlaying = false;
+        let playerAnimationId = null;
+        
+        async function initFullPlayer() {
+            log('初始化完整播放器...');
+            playerFrames = [];
+            
+            try {
+                // 获取视频信息
+                const infoResponse = await fetch('/api/video/vis.ban/info');
+                const infoData = await infoResponse.json();
+                
+                log(`视频信息: ${infoData.info.frame_count}帧, ${infoData.info.fps}fps`);
+                
+                // 加载前10帧测试
+                const framesResponse = await fetch('/api/video/vis.ban/frames/0/10');
+                const framesData = await framesResponse.json();
+                
+                log(`收到 ${framesData.frames.length} 帧数据`);
+                
+                const loadPromises = framesData.frames.map(frame => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            img.frameIdx = frame.frame_idx;
+                            img.width = frame.width;
+                            img.height = frame.height;
+                            resolve(img);
+                        };
+                        img.onerror = () => reject(new Error(`帧${frame.frame_idx}加载失败`));
+                        img.src = frame.frame_data;
+                    });
+                });
+                
+                playerFrames = await Promise.all(loadPromises);
+                playerFrames.sort((a, b) => a.frameIdx - b.frameIdx);
+                
+                log(`成功加载 ${playerFrames.length} 帧`);
+                
+                // 初始化Canvas
+                const canvas = document.getElementById('full-player-canvas');
+                if (playerFrames.length > 0) {
+                    const firstFrame = playerFrames[0];
+                    canvas.width = firstFrame.width;
+                    canvas.height = firstFrame.height;
+                    log(`Canvas尺寸: ${canvas.width}x${canvas.height}`);
+                    
+                    // 绘制第一帧
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(firstFrame, 0, 0, canvas.width, canvas.height);
+                    log('第一帧已绘制');
+                    
+                    // 自动播放
+                    playFullPlayer();
+                }
+                
+            } catch (error) {
+                log(`完整播放器初始化失败: ${error.message}`);
+                console.error(error);
+            }
+        }
+        
+        function playFullPlayer() {
+            if (playerFrames.length === 0) return;
+            playerIsPlaying = true;
+            playerCurrentFrame = 0;
+            log('开始播放完整播放器');
+            animateFullPlayer();
+        }
+        
+        function animateFullPlayer() {
+            if (!playerIsPlaying) return;
+            
+            const canvas = document.getElementById('full-player-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            const frame = playerFrames[playerCurrentFrame];
+            if (frame) {
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+                log(`播放帧 ${playerCurrentFrame}: ${frame.width}x${frame.height}`);
+            }
+            
+            playerCurrentFrame = (playerCurrentFrame + 1) % playerFrames.length;
+            
+            playerAnimationId = requestAnimationFrame(() => {
+                setTimeout(() => animateFullPlayer(), 100); // 10fps
+            });
+        }
+        
+        log('页面加载完成，点击按钮开始测试');
+    </script>
+</body>
+</html>

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>播放器测试</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial; background: #f0f0f0; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .player-wrapper { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+        .video-player { width: 100%; height: 500px; position: relative; }
+        canvas { display: block; width: 100%; height: 100%; }
+        .controls { margin-top: 10px; padding: 10px; background: #fff; border-radius: 8px; }
+        button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+        .info { margin-top: 20px; padding: 15px; background: #fff; border-radius: 8px; }
+        .log { margin-top: 10px; padding: 10px; background: #fff; border-radius: 8px; height: 200px; overflow-y: scroll; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Banana Player 测试</h1>
+        
+        <div class="player-wrapper">
+            <div id="video-player" class="video-player"></div>
+        </div>
+        
+        <div class="controls">
+            <button id="play-btn">播放</button>
+            <button id="pause-btn">暂停</button>
+            <button id="next-btn">下一帧</button>
+            <button id="test-btn">测试单帧</button>
+            <span id="time-display">0:00 / 0:00</span>
+        </div>
+        
+        <div class="info">
+            <h3>视频信息</h3>
+            <div id="video-info">加载中...</div>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        const logContainer = document.getElementById('log');
+        
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            logContainer.innerHTML += `<div>[${time}] ${msg}</div>`;
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(msg);
+        }
+        
+        class TestPlayer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.canvas = document.createElement('canvas');
+                this.canvas.style.width = '100%';
+                this.canvas.style.height = '100%';
+                this.container.appendChild(this.canvas);
+                this.ctx = this.canvas.getContext('2d');
+                
+                this.frames = [];
+                this.currentFrame = 0;
+                this.totalFrames = 0;
+                this.fps = 10;
+                this.isPlaying = false;
+                this.animationId = null;
+                
+                log('播放器初始化完成');
+            }
+            
+            async loadVideo(filename) {
+                log('开始加载视频: ' + filename);
+                
+                try {
+                    // 获取视频信息
+                    const infoResponse = await fetch(`/api/video/${filename}/info`);
+                    const infoData = await infoResponse.json();
+                    
+                    if (infoData.error) {
+                        throw new Error(infoData.error);
+                    }
+                    
+                    this.fps = infoData.info.fps || 10;
+                    this.totalFrames = infoData.info.frame_count || 0;
+                    
+                    log(`视频信息: ${this.totalFrames}帧, ${this.fps}fps`);
+                    document.getElementById('video-info').innerHTML = `
+                        <p>帧数: ${this.totalFrames}</p>
+                        <p>帧率: ${this.fps} fps</p>
+                        <p>分辨率: ${infoData.info.width}x${infoData.info.height}</p>
+                        <p>时长: ${(this.totalFrames / this.fps).toFixed(1)}秒</p>
+                    `;
+                    
+                    // 加载帧数据
+                    await this.loadFrames(filename, 0, Math.min(10, this.totalFrames));
+                    
+                    // 渲染第一帧
+                    this.renderFrame();
+                    
+                    log('视频加载完成');
+                } catch (error) {
+                    log('加载失败: ' + error.message);
+                    console.error(error);
+                }
+            }
+            
+            async loadFrames(filename, start, end) {
+                log(`加载帧 ${start}-${end}`);
+                
+                try {
+                    const response = await fetch(`/api/video/${filename}/frames/${start}/${end}`);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    log(`收到 ${data.frames.length} 帧数据`);
+                    
+                    // 创建Image对象
+                    const loadPromises = data.frames.map(frame => {
+                        return new Promise((resolve, reject) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                log(`帧 ${frame.frame_idx} 加载成功: ${frame.width}x${frame.height}`);
+                                resolve(img);
+                            };
+                            img.onerror = () => {
+                                log(`帧 ${frame.frame_idx} 加载失败`);
+                                reject(new Error('加载帧失败'));
+                            };
+                            img.src = frame.frame_data;
+                            img.frameIdx = frame.frame_idx;
+                            img.width = frame.width;
+                            img.height = frame.height;
+                        });
+                    });
+                    
+                    const frameImages = await Promise.all(loadPromises);
+                    this.frames.push(...frameImages);
+                    this.frames.sort((a, b) => a.frameIdx - b.frameIdx);
+                    
+                    log('帧数据加载并排序完成');
+                } catch (error) {
+                    log('加载帧失败: ' + error.message);
+                    throw error;
+                }
+            }
+            
+            renderFrame() {
+                if (this.frames.length === 0) {
+                    log('没有帧数据可渲染');
+                    return;
+                }
+                
+                const frame = this.frames[this.currentFrame];
+                if (!frame) {
+                    log(`帧 ${this.currentFrame} 不存在`);
+                    return;
+                }
+                
+                log(`渲染帧 ${this.currentFrame}: ${frame.width}x${frame.height}`);
+                
+                // 设置Canvas尺寸
+                this.canvas.width = frame.width;
+                this.canvas.height = frame.height;
+                
+                log(`Canvas尺寸设置为: ${this.canvas.width}x${this.canvas.height}`);
+                
+                // 清除Canvas
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // 绘制帧
+                this.ctx.drawImage(frame, 0, 0, frame.width, frame.height);
+                
+                log('帧绘制完成');
+                
+                // 更新时间显示
+                const currentTime = this.currentFrame / this.fps;
+                const totalTime = this.totalFrames / this.fps;
+                document.getElementById('time-display').textContent = 
+                    `${this.formatTime(currentTime)} / ${this.formatTime(totalTime)}`;
+            }
+            
+            play() {
+                if (this.isPlaying) return;
+                this.isPlaying = true;
+                log('开始播放');
+                this.animate();
+            }
+            
+            pause() {
+                this.isPlaying = false;
+                if (this.animationId) {
+                    cancelAnimationFrame(this.animationId);
+                    this.animationId = null;
+                }
+                log('暂停播放');
+            }
+            
+            animate() {
+                if (!this.isPlaying) return;
+                
+                this.currentFrame++;
+                if (this.currentFrame >= this.frames.length) {
+                    this.currentFrame = 0;
+                }
+                
+                this.renderFrame();
+                
+                const frameInterval = 1000 / this.fps;
+                this.animationId = setTimeout(() => {
+                    requestAnimationFrame(() => this.animate());
+                }, frameInterval);
+            }
+            
+            nextFrame() {
+                this.pause();
+                this.currentFrame = (this.currentFrame + 1) % this.frames.length;
+                this.renderFrame();
+            }
+            
+            formatTime(seconds) {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        // 初始化播放器
+        const player = new TestPlayer('video-player');
+        
+        // 绑定按钮事件
+        document.getElementById('play-btn').addEventListener('click', () => player.play());
+        document.getElementById('pause-btn').addEventListener('click', () => player.pause());
+        document.getElementById('next-btn').addEventListener('click', () => player.nextFrame());
+        document.getElementById('test-btn').addEventListener('click', async () => {
+            log('测试单帧加载...');
+            try {
+                const response = await fetch('/api/video/vis.ban/frame/0');
+                const data = await response.json();
+                log(`单帧响应: ${JSON.stringify({success: data.success, width: data.width, height: data.height})}`);
+                
+                if (data.success && data.frame_data) {
+                    const img = new Image();
+                    img.onload = () => {
+                        log(`测试图像加载成功: ${img.width}x${img.height}`);
+                    };
+                    img.onerror = () => log('测试图像加载失败');
+                    img.src = data.frame_data;
+                }
+            } catch (error) {
+                log('测试失败: ' + error.message);
+            }
+        });
+        
+        // 加载视频
+        player.loadVideo('vis.ban');
+    </script>
+</body>
+</html>

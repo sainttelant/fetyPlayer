@@ -330,6 +330,113 @@ class BANCodec:
             raise Exception(f"解码失败: {str(e)}")
 
     @staticmethod
+    def decode_single_frame(ban_path, frame_idx, password=None):
+        """解码单帧（用于Web播放器）
+        Args:
+            ban_path: .ban视频文件路径
+            frame_idx: 帧索引
+            password: 可选密码
+        Returns:
+            numpy.ndarray: 帧数据，失败返回None
+        """
+        try:
+            with open(ban_path, 'rb') as f:
+                # 读取并验证magic number
+                magic = f.read(4)
+                magic = deobfuscate_data(magic)
+                if magic != PinkConfig.BAN_MAGIC_NUMBER:
+                    raise Exception(f"无效的.ban文件格式")
+                
+                # 读取盐值和IV
+                salt = deobfuscate_data(f.read(32))
+                iv = deobfuscate_data(f.read(16))
+                
+                # 读取元数据
+                header_data = f.read(16)
+                fps, width, height, frame_count = struct.unpack('IIII', header_data)
+                
+                # 检查帧索引范围
+                if frame_idx < 0 or frame_idx >= frame_count:
+                    raise Exception(f"帧索引超出范围: {frame_idx} >= {frame_count}")
+                
+                # 重建主密钥
+                if password:
+                    master_key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000, 32)
+                else:
+                    seed = PinkConfig.BAN_MAGIC_NUMBER + salt + PinkConfig.APP_NAME.encode()
+                    master_key = hashlib.pbkdf2_hmac('sha256', seed, b'BananaKeyDerivation', 100000, 32)
+                
+                # 读取帧大小表
+                sizes_len_data = f.read(4)
+                if len(sizes_len_data) < 4:
+                    raise Exception("文件格式错误：无法读取帧大小表长度")
+                
+                sizes_len = struct.unpack('I', sizes_len_data)[0]
+                encrypted_sizes = f.read(sizes_len)
+                
+                # 解密帧大小表
+                sizes_packet = decrypt_aes(encrypted_sizes, master_key, iv)
+                if not sizes_packet:
+                    raise Exception("解密失败：密钥错误或文件已损坏")
+                
+                # 验证校验和
+                expected_sum = sizes_packet[:16]
+                actual_sum = calculate_checksum(sizes_packet[16:])
+                if expected_sum != actual_sum:
+                    raise Exception("文件完整性验证失败：帧大小表校验和不匹配")
+                
+                # 解析帧大小
+                sizes_data_bytes = sizes_packet[16:]
+                stored_frame_count = struct.unpack('I', sizes_data_bytes[:4])[0]
+                sizes_str = sizes_data_bytes[4:].decode('utf-8')
+                frame_sizes = [int(s) for s in sizes_str.split(',') if s]
+                
+                # 计算目标帧位置
+                offset = f.tell()
+                for i in range(frame_idx):
+                    if i >= len(frame_sizes):
+                        raise IndexError(f"帧索引超出范围: {frame_idx} >= {len(frame_sizes)}")
+                    offset += frame_sizes[i]
+                
+                # 读取并解密目标帧
+                f.seek(offset)
+                frame_size = frame_sizes[frame_idx]
+                if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
+                    raise Exception(f"无效的帧大小: {frame_size}")
+                
+                encrypted_frame = f.read(frame_size)
+                if len(encrypted_frame) < frame_size:
+                    raise Exception("帧数据不完整")
+                
+                # 解密帧
+                if ENCRYPTION_ENABLED:
+                    frame_packet = decrypt_aes(encrypted_frame, master_key, iv)
+                else:
+                    frame_packet = encrypted_frame
+                
+                if not frame_packet:
+                    raise Exception('帧解密失败')
+                
+                # 验证校验和
+                frame_checksum = frame_packet[4:20]
+                frame_data = frame_packet[20:]
+                if calculate_checksum(frame_data) != frame_checksum:
+                    raise Exception('帧数据校验失败')
+                
+                # 解码帧
+                nparr = np.frombuffer(frame_data, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    raise Exception('帧解码失败')
+                
+                return frame
+                
+        except Exception as e:
+            print(f"解码单帧失败: {e}")
+            return None
+
+    @staticmethod
     def get_video_info(ban_path):
         """获取视频信息（需要解密）
         Args:

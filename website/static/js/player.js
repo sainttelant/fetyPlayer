@@ -25,23 +25,8 @@ class BananaPlayer {
     }
     
     init() {
-        // 创建 canvas 元素
-        this.canvas = document.createElement('canvas');
-        this.canvas.width = 854;
-        this.canvas.height = 480;
-        this.canvas.style.width = '100%';
-        this.canvas.style.height = '100%';
-        this.canvas.style.objectFit = 'contain';
+        // 清空容器
         this.container.innerHTML = '';
-        this.container.appendChild(this.canvas);
-        
-        this.ctx = this.canvas.getContext('2d');
-        
-        // 隐藏占位符
-        const placeholder = this.container.querySelector('.player-placeholder');
-        if (placeholder) {
-            placeholder.style.display = 'none';
-        }
         
         // 初始化标准视频元素
         this.standardVideo = document.getElementById('standard-video');
@@ -82,6 +67,8 @@ class BananaPlayer {
     
     async loadBanVideo(filename) {
         this.isBanFormat = true;
+        this.filename = filename;
+        this.watchLimitReached = false;
         
         try {
             this.showLoading();
@@ -98,12 +85,18 @@ class BananaPlayer {
             this.totalFrames = infoData.info.frame_count || 0;
             this.frameInterval = 1000 / this.fps;
             
+            // 计算15秒限制对应的帧数
+            this.maxWatchFrames = Math.floor(15 * this.fps);
+            
             // 解码视频
             await this.decodeBanVideo(filename);
             
             this.hideLoading();
             this.renderFrame();
             this.updateTimeDisplay();
+            
+            // 显示15秒限制提示
+            this.showWatchLimitWarning();
             
         } catch (error) {
             console.error('加载视频失败:', error);
@@ -112,22 +105,74 @@ class BananaPlayer {
     }
     
     async decodeBanVideo(filename) {
-        // 获取视频数据块
-        const response = await fetch(`/videos/${filename}`);
-        const blob = await response.blob();
-        const arrayBuffer = await blob.arrayBuffer();
-        
-        // 这里需要后端支持分块传输帧数据
-        // 简化版本：使用 API 获取帧数据
-        // 实际实现需要后端提供帧解密 API
-        
-        // 模拟加载帧数据
         this.frames = [];
-        this.showLoading();
         
-        // 注意：完整实现需要后端提供帧解密端点
-        // 这里显示提示信息
-        this.showMessage('正在准备播放 .ban 格式视频...');
+        // 批量加载帧数据（每次加载50帧，但限制在15秒内）
+        const batchSize = 50;
+        let loadedFrames = 0;
+        const maxFramesToLoad = Math.min(this.totalFrames, this.maxWatchFrames);
+        
+        while (loadedFrames < maxFramesToLoad) {
+            const start = loadedFrames;
+            const end = Math.min(start + batchSize, maxFramesToLoad);
+            
+            try {
+                const response = await fetch(`/api/video/${filename}/frames/${start}/${end}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    if (data.limit_reached) {
+                        // 达到观看限制
+                        this.watchLimitReached = true;
+                        this.showMessage(data.error);
+                        break;
+                    }
+                    throw new Error(data.error);
+                }
+                
+                // 创建Image对象加载帧数据
+                const loadPromises = data.frames.map(frame => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            // 设置帧尺寸属性
+                            img.width = frame.width;
+                            img.height = frame.height;
+                            img.frameIdx = frame.frame_idx;
+                            img.frameData = frame;
+                            console.log('帧加载成功:', frame.frame_idx, '尺寸:', frame.width, 'x', frame.height);
+                            resolve(img);
+                        };
+                        img.onerror = () => {
+                            console.error('帧加载失败:', frame.frame_idx);
+                            reject(new Error('加载帧失败'));
+                        };
+                        img.src = frame.frame_data;
+                    });
+                });
+                
+                const frameImages = await Promise.all(loadPromises);
+                this.frames.push(...frameImages);
+                loadedFrames += frameImages.length;
+                
+                // 更新加载进度
+                const progress = Math.round((loadedFrames / maxFramesToLoad) * 100);
+                this.showMessage(`正在加载帧: ${loadedFrames}/${maxFramesToLoad} (${progress}%)`);
+                
+                // 检查观看限制
+                if (data.watch_limit && !data.watch_limit.can_watch) {
+                    this.watchLimitReached = true;
+                    break;
+                }
+                
+            } catch (error) {
+                console.error('加载帧失败:', error);
+                throw error;
+            }
+        }
+        
+        // 按帧索引排序
+        this.frames.sort((a, b) => a.frameIdx - b.frameIdx);
     }
     
     loadStandardVideo() {
@@ -151,14 +196,49 @@ class BananaPlayer {
         if (this.frames.length > 0 && this.currentFrame < this.frames.length) {
             const frame = this.frames[this.currentFrame];
             
-            // 调整 canvas 尺寸以匹配帧
-            if (this.canvas.width !== frame.width || this.canvas.height !== frame.height) {
-                this.canvas.width = frame.width;
-                this.canvas.height = frame.height;
+            console.log('渲染帧:', this.currentFrame, '帧数据:', {
+                hasFrame: !!frame,
+                width: frame.width,
+                height: frame.height,
+                complete: frame.complete,
+                naturalWidth: frame.naturalWidth,
+                naturalHeight: frame.naturalHeight
+            });
+            
+            // 使用natural尺寸
+            const width = frame.naturalWidth || frame.width || 2932;
+            const height = frame.naturalHeight || frame.height || 800;
+            
+            // 调整 canvas 尺寸以匹配帧（这会重置context）
+            if (this.canvas.width !== width || this.canvas.height !== height) {
+                console.log('调整Canvas尺寸:', width, 'x', height);
+                this.canvas.width = width;
+                this.canvas.height = height;
+                // 尺寸改变后需要重新获取context
+                this.ctx = this.canvas.getContext('2d');
             }
             
-            this.ctx.putImageData(frame, 0, 0);
+            // 确保图像已加载完成
+            if (frame.complete || frame.naturalWidth > 0) {
+                // 清除画布
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                // 绘制帧
+                this.ctx.drawImage(frame, 0, 0, width, height);
+                console.log('成功绘制帧到Canvas:', width, 'x', height);
+            } else {
+                console.log('图像尚未加载完成，等待...');
+                frame.onload = () => {
+                    // 清除画布
+                    this.ctx.fillStyle = '#000';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    // 绘制帧
+                    this.ctx.drawImage(frame, 0, 0, width, height);
+                    console.log('图像加载完成后绘制帧:', width, 'x', height);
+                };
+            }
         } else {
+            console.log('无帧数据，显示占位符');
             // 显示占位帧
             this.ctx.fillStyle = '#000';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -208,6 +288,14 @@ class BananaPlayer {
         
         if (elapsed >= this.frameInterval) {
             this.currentFrame++;
+            
+            // 检查15秒限制
+            if (this.currentFrame >= this.maxWatchFrames) {
+                this.pause();
+                this.watchLimitReached = true;
+                this.showWatchLimitDialog();
+                return;
+            }
             
             if (this.currentFrame >= this.totalFrames) {
                 this.currentFrame = 0;
@@ -419,6 +507,39 @@ class BananaPlayer {
         setTimeout(() => msg.remove(), 3000);
     }
     
+    showWatchLimitWarning() {
+        // 显示15秒限制警告
+        const warning = document.createElement('div');
+        warning.className = 'watch-limit-warning';
+        warning.style.cssText = 'position: absolute; top: 10px; right: 10px; background: rgba(255, 107, 107, 0.9); color: white; padding: 8px 12px; border-radius: 6px; font-size: 12px; z-index: 1000;';
+        warning.innerHTML = '⚠️ 非会员用户仅可观看15秒';
+        this.container.appendChild(warning);
+        
+        // 5秒后自动消失
+        setTimeout(() => {
+            if (warning.parentNode) {
+                warning.remove();
+            }
+        }, 5000);
+    }
+    
+    showWatchLimitDialog() {
+        // 显示观看限制对话框
+        const dialog = document.createElement('div');
+        dialog.className = 'watch-limit-dialog';
+        dialog.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: linear-gradient(135deg, #ff69b4, #ff1493); color: white; padding: 30px; border-radius: 15px; text-align: center; z-index: 2000; box-shadow: 0 10px 30px rgba(0,0,0,0.3);';
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 15px 0; font-size: 20px;">⏰ 观看时间到</h3>
+            <p style="margin: 0 0 20px 0; font-size: 14px;">非会员用户只能观看15秒</p>
+            <p style="margin: 0 0 25px 0; font-size: 12px; opacity: 0.9;">升级会员解锁完整功能</p>
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <button onclick="this.parentElement.parentElement.remove()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer;">关闭</button>
+                <button onclick="window.location.href='/upgrade'" style="background: white; color: #ff1493; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">升级会员</button>
+            </div>
+        `;
+        this.container.appendChild(dialog);
+    }
+    
     hideLoading() {
         const placeholder = this.container.querySelector('.player-placeholder');
         if (placeholder) {
@@ -428,12 +549,19 @@ class BananaPlayer {
         // 确保 canvas 存在
         if (!this.canvas) {
             this.canvas = document.createElement('canvas');
-            this.canvas.width = 854;
-            this.canvas.height = 480;
             this.canvas.style.width = '100%';
             this.canvas.style.height = '100%';
+            this.canvas.style.display = 'block';
             this.container.appendChild(this.canvas);
             this.ctx = this.canvas.getContext('2d');
+            
+            // 设置初始尺寸避免0x0问题
+            this.canvas.width = 854;
+            this.canvas.height = 480;
+            this.ctx.fillStyle = '#000';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            console.log('Canvas已创建，初始尺寸:', this.canvas.width, 'x', this.canvas.height);
         }
     }
 }
