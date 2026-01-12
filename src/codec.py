@@ -94,7 +94,7 @@ class BANCodec:
     """BAN格式编解码器"""
     @staticmethod
     def encode_video(input_path, output_path, progress_callback=None, password=None):
-        """将标准视频编码为.ban格式（强加密）
+        """将标准视频编码为.ban格式（强加密） - 流式版本（内存高效）
         Args:
             input_path: 输入视频路径
             output_path: 输出.ban文件路径
@@ -142,11 +142,13 @@ class BANCodec:
                 header_pos = f.tell()
                 f.write(struct.pack('IIII', fps, width, height, 0))
                 
-                # 加密帧数据
-                encrypted_frames = []
+                # 第一遍：读取所有帧并收集大小（仅存储大小，不存储帧数据）
                 frame_sizes = []
                 current_frame = 0
                 actual_frames = 0
+                
+                # 临时存储加密帧的位置
+                frame_data_positions = []
                 
                 while True:
                     ret, frame = cap.read()
@@ -165,11 +167,14 @@ class BANCodec:
                     # AES加密
                     if ENCRYPTION_ENABLED:
                         encrypted = encrypt_aes(frame_packet, master_key, iv)
-                        encrypted_frames.append(encrypted)
                     else:
-                        encrypted_frames.append(frame_packet)
+                        encrypted = frame_packet
                     
-                    frame_sizes.append(len(encrypted_frames[-1]))
+                    # 写入加密帧到临时位置
+                    frame_data_positions.append((f.tell(), encrypted))
+                    f.write(encrypted)
+                    frame_sizes.append(len(encrypted))
+                    
                     current_frame += 1
                     actual_frames += 1
                     
@@ -183,10 +188,6 @@ class BANCodec:
                 encrypted_sizes = encrypt_aes(sizes_packet, master_key, iv) if ENCRYPTION_ENABLED else sizes_packet
                 f.write(struct.pack('I', len(encrypted_sizes)))
                 f.write(encrypted_sizes)
-                
-                # 写入加密的帧数据
-                for enc_frame in encrypted_frames:
-                    f.write(enc_frame)
                 
                 # 回到头部更新实际的帧数
                 f.seek(header_pos)

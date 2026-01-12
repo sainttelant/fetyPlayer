@@ -13,6 +13,7 @@ from .config import PinkConfig
 from .license_manager import LicenseManager
 from .codec import BANCodec
 from .ui_components import RoundedFrame, RoundButton, create_heart_decoration
+from .frame_buffer import StreamingDecoder, FramePreloader
 
 class BananaPlayerPink:
     """Banana Player Main Class"""
@@ -31,15 +32,18 @@ class BananaPlayerPink:
         self.create_menu_bar()
         # Initialize license manager
         self.license_manager = LicenseManager()
-        # Initialize video state variables
+        # Initialize video state variables (streaming mode)
         self.current_video = None
-        self.frames = []
+        self.decoder = None  # Streaming decoder instead of frames list
+        self.preloader = None  # Frame preloader
         self.metadata = None
         self.current_frame_idx = 0
         self.is_playing = False
         self.play_thread = None
         self.seeking = False  # Prevent progress bar recursive update
         self.original_video_size = None  # Store original video resolution
+        self.control_frame = None  # Control panel frame
+        self.inner_frame = None  # Inner frame for controls
         # Create UI
         self.setup_ui()
         # Check license status
@@ -186,32 +190,57 @@ class BananaPlayerPink:
         
     def create_controls(self, parent):
         """Create control panel"""
+        # 创建圆角外框（用于装饰）
+        control_frame_container = tk.Frame(parent, bg=PinkConfig.PINK_SOFT)
+        control_frame_container.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 圆角边框
         control_frame = RoundedFrame(
-            parent,
+            control_frame_container,
             radius=PinkConfig.RADIUS_SMALL,
             bg_color=PinkConfig.CREAM,
             border_color=PinkConfig.PINK_PRIMARY,
             border_width=PinkConfig.BORDER_NORMAL,
             height=PinkConfig.CONTROL_PANEL_HEIGHT
         )
-        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        control_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 内部容器用于放置控件（不会被 delete 清除）
+        inner_frame = tk.Frame(control_frame, bg=PinkConfig.CREAM)
+        inner_frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER, 
+                        relwidth=0.95, relheight=0.8)
+        
         # Play button
-        self.play_btn = RoundButton(control_frame, "[ Play ]",
-                                    command=self.toggle_play, width=100, height=35)
-        control_frame.create_window(100, 40, window=self.play_btn)
+        self.play_btn = RoundButton(inner_frame, "[ Play ]",
+                                     command=self.toggle_play, width=100, height=35)
+        self.play_btn.grid(row=0, column=0, padx=10, pady=10)
+        
         # Stop button
-        stop_btn = RoundButton(control_frame, "[ Stop ]",
+        stop_btn = RoundButton(inner_frame, "[ Stop ]",
                               command=self.stop_video, width=100, height=35)
-        control_frame.create_window(220, 40, window=stop_btn)
-        # Progress bar
-        self.progress = ttk.Scale(control_frame, from_=0, to=100, orient=tk.HORIZONTAL,
+        stop_btn.grid(row=0, column=1, padx=10, pady=10)
+        
+        # Progress bar frame
+        progress_frame = tk.Frame(inner_frame, bg=PinkConfig.CREAM)
+        progress_frame.grid(row=0, column=2, padx=20, pady=10, sticky="ew")
+        
+        self.progress = ttk.Scale(progress_frame, from_=0, to=100, orient=tk.HORIZONTAL,
                                  command=self.seek_video)
-        control_frame.create_window(600, 40, window=self.progress, width=600, height=30)
-        # Time display - use FONT_NORMAL for Chinese support
-        self.time_label = tk.Label(control_frame, text="00:00 / 00:00",
+        self.progress.pack(fill=tk.X, expand=True)
+        
+        # Time display
+        self.time_label = tk.Label(inner_frame, text="00:00 / 00:00",
                                    font=PinkConfig.FONT_NORMAL,
                                    bg=PinkConfig.CREAM, fg=PinkConfig.PINK_DARK)
-        control_frame.create_window(900, 40, window=self.time_label)
+        self.time_label.grid(row=0, column=3, padx=10, pady=10)
+        
+        # Store references
+        self.control_frame = control_frame
+        self.inner_frame = inner_frame
+        
+        # Configure column weights
+        inner_frame.columnconfigure(2, weight=1)
+        
         # Custom progress bar style
         self._style_progress_bar()
         
@@ -252,12 +281,12 @@ class BananaPlayerPink:
         if hasattr(self, '_resize_job') and self._resize_job:
             self.root.after_cancel(self._resize_job)
         
-        if self.frames and self.current_frame_idx < len(self.frames):
+        if self.decoder and self.current_frame_idx < self.metadata['frame_count']:
             self._resize_job = self.root.after(100, self._refresh_frame)
     
     def _refresh_frame(self):
         """刷新当前帧（用于窗口大小变化时）"""
-        if self.frames and self.current_frame_idx < len(self.frames):
+        if self.decoder and self.current_frame_idx < self.metadata['frame_count']:
             self.display_frame(self.current_frame_idx, force=True)
         self._resize_job = None
     
@@ -291,7 +320,7 @@ class BananaPlayerPink:
             messagebox.showwarning("License Expired", "Your trial period has expired. Please activate Gold Member to continue!")
             
     def open_video(self):
-        """打开视频文件"""
+        """打开视频文件 (使用流式解码器)"""
         valid, _ = self.license_manager.check_license()
         if not valid:
             messagebox.showerror("License Error", "Your license has expired. Please activate Gold Member!")
@@ -302,24 +331,34 @@ class BananaPlayerPink:
         )
         if file_path:
             try:
-                self.info_label.config(text="Loading video... Please wait...")
+                self.info_label.config(text="Loading video metadata...")
                 self.root.update()
-                self.metadata, self.frames = BANCodec.decode_video(file_path)
                 
-                # 检查是否有有效帧数据
-                if not self.frames:
-                    messagebox.showerror("Error", "No valid frame data in video file!")
-                    self.info_label.config(text="Error: No valid frames")
+                # 使用流式解码器替代原有方法
+                self.decoder = StreamingDecoder(
+                    file_path, 
+                    buffer_size=60, 
+                    buffer_memory_mb=500
+                )
+                self.metadata = self.decoder.metadata
+                
+                # 创建帧预加载器
+                self.preloader = FramePreloader(self.decoder, preload_window=30)
+                
+                # 检查是否有有效视频数据
+                if not self.metadata or self.metadata['frame_count'] == 0:
+                    messagebox.showerror("Error", "No valid video data in file!")
+                    self.info_label.config(text="Error: No valid video")
                     return
                     
                 self.current_video = file_path
                 self.current_frame_idx = 0
-                self.progress.config(to=len(self.frames)-1)
+                self.progress.config(to=self.metadata['frame_count']-1)
                 
                 # 显示视频信息
                 info_text = (f"Loaded: {os.path.basename(file_path)} | "
                            f"{self.metadata['width']}x{self.metadata['height']} | "
-                           f"{self.metadata['fps']} FPS | {len(self.frames)} frames")
+                           f"{self.metadata['fps']} FPS | {self.metadata['frame_count']} frames")
                 self.info_label.config(text=info_text)
                 
                 # 根据视频分辨率调整窗口大小
@@ -328,7 +367,7 @@ class BananaPlayerPink:
                 # 显示第一帧
                 self.display_frame(0, force=True)
                 
-                messagebox.showinfo("Success", f"Video loaded successfully!\n\nFile: {os.path.basename(file_path)}\nResolution: {self.metadata['width']}x{self.metadata['height']}\nFPS: {self.metadata['fps']} FPS\nFrames: {len(self.frames)}")
+                messagebox.showinfo("Success", f"Video loaded successfully!\n\nFile: {os.path.basename(file_path)}\nResolution: {self.metadata['width']}x{self.metadata['height']}\nFPS: {self.metadata['fps']} FPS\nFrames: {self.metadata['frame_count']}")
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Cannot open video: {str(e)}")
@@ -347,14 +386,54 @@ class BananaPlayerPink:
                 filetypes=[("Banana video", f"*{PinkConfig.BAN_EXTENSION}")]
             )
             if output_path:
-                try:
-                    self.info_label.config(text="Converting video... Please wait")
-                    self.root.update()
-                    BANCodec.encode_video(input_path, output_path)
-                    self.info_label.config(text="Conversion complete!")
-                    messagebox.showinfo("Success", f"Video converted and encrypted successfully!\nSaved to: {output_path}")
-                except Exception as e:
-                    messagebox.showerror("Error", f"Conversion failed: {str(e)}")
+                # 创建进度窗口
+                progress_window = tk.Toplevel(self.root)
+                progress_window.title("Converting...")
+                progress_window.geometry("400x150")
+                progress_window.configure(bg=PinkConfig.PINK_SOFT)
+                progress_window.transient(self.root)
+                progress_window.grab_set()
+                
+                # 进度条
+                progress = ttk.Progressbar(progress_window, mode='determinate')
+                progress.pack(fill=tk.X, padx=20, pady=20)
+                
+                # 标签
+                label = tk.Label(progress_window, text="Starting conversion...",
+                               font=PinkConfig.FONT_NORMAL,
+                               bg=PinkConfig.PINK_SOFT, fg=PinkConfig.PINK_DARK)
+                label.pack(pady=10)
+                
+                def update_progress(current, total):
+                    """更新进度回调"""
+                    if total > 0:
+                        percent = (current / total) * 100
+                        progress['value'] = percent
+                        label.config(text=f"Converting: {current}/{total} frames ({percent:.1f}%)")
+                        progress_window.update()
+                
+                def do_conversion():
+                    """在单独线程中执行转换"""
+                    try:
+                        self.info_label.config(text="Converting video... Please wait")
+                        BANCodec.encode_video(input_path, output_path, progress_callback=update_progress)
+                        
+                        # 转换完成
+                        self.root.after(0, lambda: [
+                            progress_window.destroy(),
+                            self.info_label.config(text="Conversion complete!"),
+                            messagebox.showinfo("Success", f"Video converted and encrypted successfully!\nSaved to: {output_path}")
+                        ])
+                    except Exception as e:
+                        self.root.after(0, lambda: [
+                            progress_window.destroy(),
+                            self.info_label.config(text="Conversion failed"),
+                            messagebox.showerror("Error", f"Conversion failed: {str(e)}")
+                        ])
+                
+                # 在后台线程执行转换
+                thread = threading.Thread(target=do_conversion, daemon=True)
+                thread.start()
                     
     def _adjust_window_to_video_size(self):
         """根据视频分辨率调整窗口大小以适应播放内容"""
@@ -395,19 +474,30 @@ class BananaPlayerPink:
     
     def _keep_video_proportion(self):
         """播放过程中保持视频比例适配窗口"""
-        if not self.original_video_size or not self.frames:
+        if not self.original_video_size or not self.decoder:
             return
             
         # 重新计算视频显示尺寸
-        if self.current_frame_idx < len(self.frames):
+        if self.current_frame_idx < self.metadata["frame_count"]:
             self.display_frame(self.current_frame_idx, force=True)
     
     def display_frame(self, frame_idx, force=False):
-        """Display specified frame"""
-        if not self.frames or frame_idx >= len(self.frames) or frame_idx < 0:
+        """Display specified frame (from streaming decoder)"""
+        if not self.decoder:
+            return
+            
+        if frame_idx < 0 or frame_idx >= self.metadata['frame_count']:
             return
 
-        frame = self.frames[frame_idx]
+        # 从流式解码器获取帧（自动从缓存或磁盘加载）
+        frame = self.decoder.get_frame(frame_idx)
+        if frame is None:
+            return
+            
+        # 更新预加载器位置
+        if self.preloader:
+            self.preloader.update_position(frame_idx)
+            
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
         # 获取当前画布大小
@@ -462,7 +552,7 @@ class BananaPlayerPink:
 
         if self.metadata and self.metadata.get('fps', 0) > 0:
             current_time = frame_idx / self.metadata['fps']
-            total_time = len(self.frames) / self.metadata['fps']
+            total_time = self.metadata['frame_count'] / self.metadata['fps']
             self.time_label.config(
                 text=f"{self._format_time(current_time)} / {self._format_time(total_time)}"
             )
@@ -475,7 +565,7 @@ class BananaPlayerPink:
         
     def toggle_play(self):
         """Play/Pause toggle"""
-        if not self.frames:
+        if not self.decoder:
             messagebox.showwarning("No Video", "Please open a .ban video first!")
             return
 
@@ -492,12 +582,12 @@ class BananaPlayerPink:
             
     def _play_video(self):
         """Play video thread"""
-        if not self.metadata or not self.frames:
+        if not self.metadata or not self.decoder:
             return
         
         fps = self.metadata['fps']
         frame_delay = 1.0 / fps
-        while self.is_playing and self.current_frame_idx < len(self.frames):
+        while self.is_playing and self.current_frame_idx < self.metadata["frame_count"]:
             start_time = time.time()
             self.root.after(0, self.display_frame, self.current_frame_idx)
             self.current_frame_idx += 1
@@ -507,7 +597,7 @@ class BananaPlayerPink:
                 time.sleep(sleep_time)
 
         # Playback end handling
-        if self.current_frame_idx >= len(self.frames):
+        if self.current_frame_idx >= self.metadata["frame_count"]:
             self.current_frame_idx = 0
             self.is_playing = False
             # Thread-safe UI update
@@ -522,12 +612,12 @@ class BananaPlayerPink:
         self.current_frame_idx = 0
         self.play_btn.text = "[ Play ]"
         self.play_btn.draw_button()
-        if self.frames:
+        if self.decoder:
             self.display_frame(0)
             
     def seek_video(self, value):
         """Seek to specified position"""
-        if self.frames and not self.seeking:
+        if self.decoder and not self.seeking:
             self.seeking = True
             self.current_frame_idx = int(float(value))
             self.display_frame(self.current_frame_idx)
@@ -588,7 +678,7 @@ class BananaPlayerPink:
 
     def show_video_info(self):
         """Show current video info"""
-        if not self.metadata or not self.frames:
+        if not self.metadata or not self.decoder:
             messagebox.showinfo("Info", "Please open a .ban video first!")
             return
 
@@ -599,10 +689,10 @@ Filename: {os.path.basename(self.current_video) if self.current_video else 'Unkn
 
 Resolution: {self.metadata['width']} x {self.metadata['height']}
 FPS: {self.metadata['fps']} FPS
-Total frames: {len(self.frames)}
-Duration: {len(self.frames) / self.metadata['fps']:.2f} seconds
+Total frames: {self.metadata["frame_count"]}
+Duration: {self.metadata["frame_count"] / self.metadata['fps']:.2f} seconds
 
-Current frame: {self.current_frame_idx + 1} / {len(self.frames)}
+Current frame: {self.current_frame_idx + 1} / {self.metadata["frame_count"]}
         """
         messagebox.showinfo("Video Info", info_text.strip())
 
