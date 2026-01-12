@@ -15,5 +15,8 @@ ALLOWED_EXTENSIONS = {'ban', 'mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv'}
 # 视频配置
 VIDEO_FOLDER = os.path.join(os.path.dirname(__file__), 'videos')
 
+# 下载配置
+DOWNLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'downloads')
+
 # 分页配置
 VIDEOS_PER_PAGE = 12

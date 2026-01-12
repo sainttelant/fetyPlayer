@@ -30,11 +30,17 @@
             </div>
             
             <div class="navbar-right">
+                <a href="{{ url_for('downloads') }}" class="download-link">
+                    <svg viewBox="0 0 24 24" width="20" height="20">
+                        <path fill="currentColor" d="M4 16h2v-6h-1.41-1.59L9 12l.7 2.83-2.83 5.65 0 12 5.65z"/>
+                    </svg>
+                    下载
+                </a>
                 <a href="{{ url_for('upload') }}" class="upload-btn">
                     <svg viewBox="0 0 24 24" width="20" height="20">
-                        <path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/>
+                        <path fill="currentColor" d="M9 16h6m-6 0 0-12-12v7h6v3l6 4.6 4.6h-6m-6 6-6 0-6H8z"/>
                     </svg>
-                    上传
+                     上传
                 </a>
             </div>
         </div>

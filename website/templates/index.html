@@ -82,8 +82,18 @@
                                     {{ (video.size / (1024*1024))|round(2) }} MB
                                 {% endif %}
                             </div>
-                        </div>
-                    </a>
+                         </div>
+                         <div class="video-actions">
+                             <a href="/download/{{ video.filename }}" class="action-btn download-btn">
+                                 <span>⬇️ 下载</span>
+                             </a>
+                             <a href="{{ url_for('watch', filename=video.filename) }}" class="action-btn play-btn">
+                                 <span>▶ 播放</span>
+                             </a>
+                             <a href="#" class="action-btn share-btn">
+                                 <span>🔗 分享</span>
+                             </a>
+                         </div>
                 {% endfor %}
             </div>
             
