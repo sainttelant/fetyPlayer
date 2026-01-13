@@ -6,18 +6,35 @@ import sys
 import base64
 import struct
 import json
+from datetime import datetime, timedelta
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from src.codec import BANCodec
 import cv2
 import numpy as np
 
 app = Flask(__name__)
 app.config.from_pyfile('config.py')
+
+from models import db, User, Subscription, PaymentRecord
+
+db.init_app(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = '请先登录'
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    """加载用户"""
+    return User.query.get(int(user_id))
 
 # 确保视频目录存在
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -47,15 +64,14 @@ class UserSession:
         
         return True, None
 
-# 全局用户会话（简化版本，实际应用中应使用数据库和session）
-user_sessions = {}
-
 def get_user_session(request):
     """获取用户会话"""
-    client_ip = request.remote_addr
-    if client_ip not in user_sessions:
-        user_sessions[client_ip] = UserSession()
-    return user_sessions[client_ip]
+    user_session = UserSession()
+    
+    if current_user.is_authenticated:
+        user_session.is_premium = current_user.is_premium_active()
+    
+    return user_session
 
 # ==================== P0阶段 - 核心API ====================
 
@@ -573,5 +589,278 @@ def download_file(filename):
     return send_from_directory(download_folder, filename, as_attachment=True, download_name=filename)
 
 
+# ==================== 用户认证 ====================
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """用户注册"""
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+        
+        if not username or not email or not password:
+            flash('请填写所有字段', 'error')
+            return redirect(url_for('register'))
+        
+        if password != confirm_password:
+            flash('两次输入的密码不一致', 'error')
+            return redirect(url_for('register'))
+        
+        if len(password) < 6:
+            flash('密码长度至少为6位', 'error')
+            return redirect(url_for('register'))
+        
+        if User.query.filter_by(username=username).first():
+            flash('用户名已存在', 'error')
+            return redirect(url_for('register'))
+        
+        if User.query.filter_by(email=email).first():
+            flash('邮箱已被注册', 'error')
+            return redirect(url_for('register'))
+        
+        user = User(username=username, email=email)
+        user.set_password(password)
+        
+        try:
+            db.session.add(user)
+            db.session.commit()
+            flash('注册成功，请登录', 'success')
+            return redirect(url_for('login'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'注册失败: {str(e)}', 'error')
+            return redirect(url_for('register'))
+    
+    return render_template('auth/register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """用户登录"""
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        
+        if not username or not password:
+            flash('请填写用户名和密码', 'error')
+            return redirect(url_for('login'))
+        
+        user = User.query.filter_by(username=username).first()
+        
+        if user and user.check_password(password):
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            login_user(user)
+            flash('登录成功', 'success')
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('index'))
+        else:
+            flash('用户名或密码错误', 'error')
+            return redirect(url_for('login'))
+    
+    return render_template('auth/login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    """用户登出"""
+    logout_user()
+    flash('已登出', 'success')
+    return redirect(url_for('index'))
+
+
+# ==================== 会员和支付 ====================
+
+@app.route('/premium')
+def premium():
+    """会员套餐页面"""
+    return render_template('premium.html')
+
+
+@app.route('/api/premium/plans')
+def api_premium_plans():
+    """获取会员套餐信息"""
+    from config import PREMIUM_PRICES
+    return jsonify({'plans': PREMIUM_PRICES})
+
+
+@app.route('/payment/<plan_type>', methods=['GET', 'POST'])
+@login_required
+def payment(plan_type):
+    """支付页面"""
+    from config import PREMIUM_PRICES
+    
+    if plan_type not in PREMIUM_PRICES:
+        flash('无效的套餐', 'error')
+        return redirect(url_for('premium'))
+    
+    plan = PREMIUM_PRICES[plan_type]
+    
+    if request.method == 'POST':
+        payment_method = request.form.get('payment_method')
+        
+        if payment_method not in ['alipay', 'bitcoin']:
+            flash('请选择支付方式', 'error')
+            return redirect(url_for('payment', plan_type=plan_type))
+        
+        payment_record = PaymentRecord(
+            user_id=current_user.id,
+            amount=plan['price'],
+            currency='USD' if payment_method == 'bitcoin' else 'CNY',
+            payment_method=payment_method,
+            status='pending'
+        )
+        
+        db.session.add(payment_record)
+        db.session.commit()
+        
+        if payment_method == 'bitcoin':
+            return redirect(url_for('bitcoin_payment', payment_id=payment_record.id, plan_type=plan_type))
+        elif payment_method == 'alipay':
+            return redirect(url_for('alipay_payment', payment_id=payment_record.id, plan_type=plan_type))
+    
+    return render_template('payment.html', plan_type=plan_type, plan=plan)
+
+
+@app.route('/payment/bitcoin/<int:payment_id>/<plan_type>')
+@login_required
+def bitcoin_payment(payment_id, plan_type):
+    """比特币支付页面"""
+    from config import PREMIUM_PRICES
+    
+    payment_record = PaymentRecord.query.get_or_404(payment_id)
+    
+    if payment_record.user_id != current_user.id:
+        flash('无权访问此支付记录', 'error')
+        return redirect(url_for('premium'))
+    
+    plan = PREMIUM_PRICES.get(plan_type, {})
+    
+    bitcoin_address = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+    
+    amount_btc = payment_record.amount * 0.000015
+    
+    return render_template('payment_bitcoin.html', 
+                         payment=payment_record, 
+                         plan=plan,
+                         bitcoin_address=bitcoin_address,
+                         amount_btc=amount_btc)
+
+
+@app.route('/payment/alipay/<int:payment_id>/<plan_type>')
+@login_required
+def alipay_payment(payment_id, plan_type):
+    """支付宝支付页面"""
+    from config import PREMIUM_PRICES
+    
+    payment_record = PaymentRecord.query.get_or_404(payment_id)
+    
+    if payment_record.user_id != current_user.id:
+        flash('无权访问此支付记录', 'error')
+        return redirect(url_for('premium'))
+    
+    plan = PREMIUM_PRICES.get(plan_type, {})
+    
+    return render_template('payment_alipay.html', 
+                         payment=payment_record, 
+                         plan=plan)
+
+
+@app.route('/api/payment/confirm/<int:payment_id>', methods=['POST'])
+@login_required
+def confirm_payment(payment_id):
+    """确认支付（模拟）"""
+    payment_record = PaymentRecord.query.get_or_404(payment_id)
+    
+    if payment_record.user_id != current_user.id:
+        return jsonify({'error': '无权操作'}), 403
+    
+    if payment_record.status != 'pending':
+        return jsonify({'error': '支付记录状态无效'}), 400
+    
+    plan_type = request.json.get('plan_type')
+    from config import PREMIUM_PRICES
+    
+    if plan_type not in PREMIUM_PRICES:
+        return jsonify({'error': '无效的套餐'}), 400
+    
+    plan = PREMIUM_PRICES[plan_type]
+    
+    payment_record.status = 'completed'
+    payment_record.completed_at = datetime.utcnow()
+    payment_record.transaction_id = f"TXN{datetime.utcnow().strftime('%Y%m%d%H%M%S')}{payment_record.id}"
+    
+    current_user.is_premium = True
+    
+    subscription = Subscription(
+        user_id=current_user.id,
+        plan_type=plan_type,
+        end_date=datetime.utcnow() + timedelta(days=plan['duration_days']),
+        status='active',
+        price=plan['price'],
+        payment_id=payment_record.id
+    )
+    
+    db.session.add(subscription)
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': '支付成功，会员已激活',
+        'subscription': {
+            'plan_type': plan_type,
+            'end_date': subscription.end_date.isoformat()
+        }
+    })
+
+
+@app.route('/api/payment/status/<int:payment_id>')
+@login_required
+def payment_status(payment_id):
+    """查询支付状态"""
+    payment_record = PaymentRecord.query.get_or_404(payment_id)
+    
+    if payment_record.user_id != current_user.id:
+        return jsonify({'error': '无权访问'}), 403
+    
+    return jsonify({
+        'status': payment_record.status,
+        'amount': payment_record.amount,
+        'currency': payment_record.currency,
+        'payment_method': payment_record.payment_method,
+        'transaction_id': payment_record.transaction_id
+    })
+
+
+@app.route('/api/user/subscription')
+@login_required
+def api_user_subscription():
+    """获取用户订阅信息"""
+    active_subscription = current_user.subscriptions.filter(
+        Subscription.end_date >= datetime.utcnow(),
+        Subscription.status == 'active'
+    ).first()
+    
+    if active_subscription:
+        return jsonify({
+            'is_premium': True,
+            'plan_type': active_subscription.plan_type,
+            'end_date': active_subscription.end_date.isoformat(),
+            'days_remaining': (active_subscription.end_date - datetime.utcnow()).days
+        })
+    else:
+        return jsonify({
+            'is_premium': False,
+            'plan_type': None,
+            'end_date': None,
+            'days_remaining': 0
+        })
+
+
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)

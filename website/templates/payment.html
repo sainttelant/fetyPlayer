@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block title %}支付 - Banana Player{% endblock %}
+
+{% block content %}
+<div class="payment-container">
+    <div class="payment-card">
+        <div class="payment-header">
+            <h1>选择支付方式</h1>
+            <p>套餐：{{ plan.name }} - ¥{{ plan.price }}</p>
+        </div>
+        
+        <form method="POST" class="payment-form">
+            <div class="payment-methods">
+                <label class="payment-option">
+                    <input type="radio" name="payment_method" value="alipay" required>
+                    <div class="payment-card-option alipay">
+                        <div class="payment-icon">🅰️</div>
+                        <div class="payment-info">
+                            <h3>支付宝</h3>
+                            <p>¥{{ plan.price }}</p>
+                        </div>
+                    </div>
+                </label>
+                
+                <label class="payment-option">
+                    <input type="radio" name="payment_method" value="bitcoin" required>
+                    <div class="payment-card-option bitcoin">
+                        <div class="payment-icon">₿</div>
+                        <div class="payment-info">
+                            <h3>比特币</h3>
+                            <p>${{ plan.price }} USD</p>
+                        </div>
+                    </div>
+                </label>
+            </div>
+            
+            <div class="payment-summary">
+                <div class="summary-item">
+                    <span>套餐</span>
+                    <span>{{ plan.name }}</span>
+                </div>
+                <div class="summary-item">
+                    <span>价格</span>
+                    <span>¥{{ plan.price }}</span>
+                </div>
+                <div class="summary-item total">
+                    <span>支付金额</span>
+                    <span>¥{{ plan.price }}</span>
+                </div>
+            </div>
+            
+            <button type="submit" class="payment-btn">确认支付</button>
+        </form>
+        
+        <div class="payment-note">
+            <p>⚠️ 请确保支付信息正确，支付完成后请等待系统确认</p>
+            <p>如有问题，请联系客服</p>
+        </div>
+    </div>
+</div>
+
+<style>
+.payment-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 80vh;
+    padding: 20px;
+    background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+}
+
+.payment-card {
+    background: white;
+    padding: 40px;
+    border-radius: 20px;
+    box-shadow: 0 10px 40px rgba(255, 154, 158, 0.3);
+    max-width: 500px;
+    width: 100%;
+}
+
+.payment-header {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.payment-header h1 {
+    color: #ff6b9d;
+    font-size: 28px;
+    margin: 0 0 10px 0;
+}
+
+.payment-header p {
+    color: #666;
+    margin: 0;
+    font-size: 16px;
+}
+
+.payment-form {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+}
+
+.payment-methods {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.payment-option {
+    cursor: pointer;
+}
+
+.payment-option input {
+    display: none;
+}
+
+.payment-card-option {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+    border: 2px solid #f0f0f0;
+    border-radius: 10px;
+    transition: all 0.3s;
+}
+
+.payment-option input:checked + .payment-card-option {
+    border-color: #ff6b9d;
+    background: linear-gradient(135deg, #fff5f7 0%, #ffe9ec 100%);
+}
+
+.payment-card-option:hover {
+    border-color: #ff6b9d;
+}
+
+.payment-card-option.alipay {
+    border-color: #1296db;
+}
+
+.payment-card-option.bitcoin {
+    border-color: #f7931a;
+}
+
+.payment-icon {
+    font-size: 36px;
+}
+
+.payment-info h3 {
+    font-size: 18px;
+    color: #333;
+    margin: 0 0 5px 0;
+}
+
+.payment-info p {
+    font-size: 16px;
+    color: #ff6b9d;
+    font-weight: 600;
+    margin: 0;
+}
+
+.payment-summary {
+    background: #f9f9f9;
+    padding: 20px;
+    border-radius: 10px;
+}
+
+.summary-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    color: #666;
+    font-size: 14px;
+}
+
+.summary-item.total {
+    border-top: 2px solid #e0e0e0;
+    margin-top: 10px;
+    padding-top: 15px;
+    font-size: 18px;
+    font-weight: 600;
+    color: #ff6b9d;
+}
+
+.payment-btn {
+    background: linear-gradient(135deg, #ff6b9d 0%, #ff9a9e 100%);
+    color: white;
+    padding: 16px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.payment-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(255, 107, 157, 0.4);
+}
+
+.payment-note {
+    text-align: center;
+    margin-top: 20px;
+    color: #999;
+    font-size: 12px;
+}
+
+.payment-note p {
+    margin: 5px 0;
+}
+</style>
+{% endblock %}

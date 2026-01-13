@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+
+{% block title %}会员套餐 - Banana Player{% endblock %}
+
+{% block content %}
+<div class="premium-container">
+    <div class="premium-header">
+        <h1>🌟 升级会员，解锁更多精彩</h1>
+        <p>享受无限观看特权，体验极致影音盛宴</p>
+    </div>
+    
+    <div class="premium-plans">
+        <div class="plan-card">
+            <div class="plan-header">
+                <h3>月度会员</h3>
+                <div class="plan-price">¥9.9<span class="period">/月</span></div>
+            </div>
+            <ul class="plan-features">
+                <li>✓ 无限观看时长</li>
+                <li>✓ 优先播放体验</li>
+                <li>✓ 高清画质</li>
+                <li>✓ 无广告干扰</li>
+            </ul>
+            <a href="{{ url_for('payment', plan_type='monthly') }}" class="plan-btn">立即购买</a>
+        </div>
+        
+        <div class="plan-card popular">
+            <div class="popular-badge">最受欢迎</div>
+            <div class="plan-header">
+                <h3>季度会员</h3>
+                <div class="plan-price">¥28.9<span class="period">/季</span></div>
+            </div>
+            <ul class="plan-features">
+                <li>✓ 无限观看时长</li>
+                <li>✓ 优先播放体验</li>
+                <li>✓ 超高清画质</li>
+                <li>✓ 无广告干扰</li>
+                <li>✓ 独家内容访问</li>
+            </ul>
+            <a href="{{ url_for('payment', plan_type='quarterly') }}" class="plan-btn">立即购买</a>
+        </div>
+        
+        <div class="plan-card">
+            <div class="plan-header">
+                <h3>年度会员</h3>
+                <div class="plan-price">¥98.9<span class="period">/年</span></div>
+            </div>
+            <ul class="plan-features">
+                <li>✓ 无限观看时长</li>
+                <li>✓ 优先播放体验</li>
+                <li>✓ 超高清画质</li>
+                <li>✓ 无广告干扰</li>
+                <li>✓ 独家内容访问</li>
+                <li>✓ 节省约 40%</li>
+            </ul>
+            <a href="{{ url_for('payment', plan_type='yearly') }}" class="plan-btn">立即购买</a>
+        </div>
+    </div>
+    
+    <div class="premium-features">
+        <h2>会员专享特权</h2>
+        <div class="feature-grid">
+            <div class="feature-item">
+                <div class="feature-icon">⏱️</div>
+                <h3>无限观看</h3>
+                <p>告别观看时长限制，随时随地想看就看</p>
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🎬</div>
+                <h3>高清画质</h3>
+                <p>支持超高清分辨率，带来影院级观影体验</p>
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🚀</div>
+                <h3>优先播放</h3>
+                <p>享受优先播放权，畅享极速加载体验</p>
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🎁</div>
+                <h3>独家内容</h3>
+                <p>解锁会员专属视频，畅享更多精彩内容</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="payment-methods">
+        <h2>支持多种支付方式</h2>
+        <div class="payment-icons">
+            <div class="payment-icon">
+                <span>🅰️</span>
+                <p>支付宝</p>
+            </div>
+            <div class="payment-icon">
+                <span>₿</span>
+                <p>比特币</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.premium-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 60px 20px;
+}
+
+.premium-header {
+    text-align: center;
+    margin-bottom: 60px;
+}
+
+.premium-header h1 {
+    font-size: 42px;
+    color: #ff6b9d;
+    margin: 0 0 20px 0;
+}
+
+.premium-header p {
+    font-size: 18px;
+    color: #666;
+}
+
+.premium-plans {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 30px;
+    margin-bottom: 80px;
+}
+
+.plan-card {
+    background: white;
+    border-radius: 20px;
+    padding: 40px 30px;
+    box-shadow: 0 5px 20px rgba(255, 154, 158, 0.2);
+    transition: transform 0.3s, box-shadow 0.3s;
+    position: relative;
+    overflow: hidden;
+}
+
+.plan-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 15px 40px rgba(255, 154, 158, 0.4);
+}
+
+.plan-card.popular {
+    border: 3px solid #ff6b9d;
+}
+
+.popular-badge {
+    position: absolute;
+    top: 20px;
+    right: -30px;
+    background: linear-gradient(135deg, #ff6b9d 0%, #ff9a9e 100%);
+    color: white;
+    padding: 8px 40px;
+    font-size: 12px;
+    font-weight: 600;
+    transform: rotate(45deg);
+}
+
+.plan-header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding-bottom: 30px;
+    border-bottom: 2px solid #f0f0f0;
+}
+
+.plan-header h3 {
+    font-size: 24px;
+    color: #333;
+    margin: 0 0 15px 0;
+}
+
+.plan-price {
+    font-size: 48px;
+    color: #ff6b9d;
+    font-weight: 700;
+}
+
+.plan-price .period {
+    font-size: 18px;
+    color: #999;
+    font-weight: 400;
+}
+
+.plan-features {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 30px 0;
+}
+
+.plan-features li {
+    padding: 12px 0;
+    color: #666;
+    font-size: 15px;
+    border-bottom: 1px solid #f5f5f5;
+}
+
+.plan-features li:last-child {
+    border-bottom: none;
+}
+
+.plan-btn {
+    display: block;
+    background: linear-gradient(135deg, #ff6b9d 0%, #ff9a9e 100%);
+    color: white;
+    text-align: center;
+    padding: 15px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-size: 16px;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.plan-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(255, 107, 157, 0.4);
+}
+
+.premium-features {
+    margin-bottom: 80px;
+}
+
+.premium-features h2 {
+    text-align: center;
+    font-size: 32px;
+    color: #333;
+    margin-bottom: 50px;
+}
+
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 30px;
+}
+
+.feature-item {
+    text-align: center;
+    padding: 30px;
+    background: #f9f9f9;
+    border-radius: 15px;
+}
+
+.feature-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+}
+
+.feature-item h3 {
+    font-size: 20px;
+    color: #333;
+    margin: 0 0 10px 0;
+}
+
+.feature-item p {
+    color: #666;
+    font-size: 14px;
+    margin: 0;
+}
+
+.payment-methods {
+    text-align: center;
+}
+
+.payment-methods h2 {
+    font-size: 32px;
+    color: #333;
+    margin-bottom: 30px;
+}
+
+.payment-icons {
+    display: flex;
+    justify-content: center;
+    gap: 60px;
+}
+
+.payment-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.payment-icon span {
+    font-size: 48px;
+}
+
+.payment-icon p {
+    color: #666;
+    font-size: 16px;
+    margin: 0;
+}
+</style>
+{% endblock %}

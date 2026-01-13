@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+
+{% block title %}支付宝支付 - Banana Player{% endblock %}
+
+{% block content %}
+<div class="payment-container">
+    <div class="payment-card">
+        <div class="payment-header">
+            <h1>🅰️ 支付宝支付</h1>
+            <p>套餐：{{ plan.name }}</p>
+        </div>
+        
+        <div class="payment-details">
+            <div class="payment-amount">
+                <span>支付金额</span>
+                <div class="amount-value">¥{{ payment.amount }}</div>
+            </div>
+            
+            <div class="qr-code">
+                <div class="qr-placeholder">
+                    <div style="font-size: 120px;">📱</div>
+                    <p>使用支付宝扫码支付</p>
+                </div>
+            </div>
+            
+            <div class="payment-info">
+                <div class="info-item">
+                    <span>订单编号</span>
+                    <span>#{{ payment.id }}</span>
+                </div>
+                <div class="info-item">
+                    <span>支付状态</span>
+                    <span class="status pending" id="paymentStatus">等待支付</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="payment-actions">
+            <button onclick="confirmPayment()" class="confirm-btn" id="confirmBtn">确认已支付</button>
+            <a href="{{ url_for('premium') }}" class="cancel-btn">取消支付</a>
+        </div>
+        
+        <div class="payment-note">
+            <p>⚠️ 请在15分钟内完成支付</p>
+            <p>📱 使用支付宝APP扫描二维码进行支付</p>
+            <p>📞 如有问题，请联系客服</p>
+        </div>
+    </div>
+</div>
+
+<style>
+.payment-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 80vh;
+    padding: 20px;
+    background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+}
+
+.payment-card {
+    background: white;
+    padding: 40px;
+    border-radius: 20px;
+    box-shadow: 0 10px 40px rgba(255, 154, 158, 0.3);
+    max-width: 500px;
+    width: 100%;
+}
+
+.payment-header {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.payment-header h1 {
+    color: #ff6b9d;
+    font-size: 28px;
+    margin: 0 0 10px 0;
+}
+
+.payment-header p {
+    color: #666;
+    margin: 0;
+    font-size: 16px;
+}
+
+.payment-details {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    margin-bottom: 30px;
+}
+
+.payment-amount {
+    text-align: center;
+    padding: 25px;
+    background: linear-gradient(135deg, #fff5f7 0%, #ffe9ec 100%);
+    border-radius: 15px;
+}
+
+.payment-amount span {
+    display: block;
+    color: #666;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.amount-value {
+    font-size: 32px;
+    color: #ff6b9d;
+    font-weight: 700;
+}
+
+.qr-code {
+    text-align: center;
+}
+
+.qr-placeholder {
+    display: inline-block;
+    padding: 30px;
+    background: #f9f9f9;
+    border-radius: 15px;
+}
+
+.qr-placeholder p {
+    color: #666;
+    margin: 15px 0 0 0;
+    font-size: 14px;
+}
+
+.payment-info {
+    background: #f9f9f9;
+    padding: 20px;
+    border-radius: 10px;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    color: #666;
+    font-size: 14px;
+}
+
+.info-item span:last-child {
+    font-weight: 600;
+}
+
+.status.pending {
+    color: #ff9800;
+}
+
+.status.completed {
+    color: #4caf50;
+}
+
+.payment-actions {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.confirm-btn {
+    flex: 1;
+    background: linear-gradient(135deg, #ff6b9d 0%, #ff9a9e 100%);
+    color: white;
+    padding: 16px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.confirm-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(255, 107, 157, 0.4);
+}
+
+.confirm-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.cancel-btn {
+    flex: 1;
+    background: #f5f5f5;
+    color: #666;
+    padding: 16px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+    transition: all 0.3s;
+}
+
+.cancel-btn:hover {
+    background: #e0e0e0;
+}
+
+.payment-note {
+    text-align: center;
+    color: #999;
+    font-size: 12px;
+}
+
+.payment-note p {
+    margin: 5px 0;
+}
+</style>
+
+<script>
+async function confirmPayment() {
+    const btn = document.getElementById('confirmBtn');
+    btn.disabled = true;
+    btn.textContent = '确认中...';
+    
+    try {
+        const response = await fetch('/api/payment/confirm/{{ payment.id }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_type: '{{ plan_type }}'
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('paymentStatus').textContent = '支付成功';
+            document.getElementById('paymentStatus').classList.remove('pending');
+            document.getElementById('paymentStatus').classList.add('completed');
+            btn.textContent = '支付成功';
+            
+            setTimeout(() => {
+                alert('支付成功！会员已激活');
+                window.location.href = '/';
+            }, 1000);
+        } else {
+            alert(data.error || '支付失败，请重试');
+            btn.disabled = false;
+            btn.textContent = '确认已支付';
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('网络错误，请重试');
+        btn.disabled = false;
+        btn.textContent = '确认已支付';
+    }
+}
+</script>
+{% endblock %}
