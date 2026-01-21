@@ -31,3 +31,13 @@ PREMIUM_PRICES = {
     'quarterly': {'price': 28.9, 'duration_days': 90, 'name': '季度会员'},
     'yearly': {'price': 98.9, 'duration_days': 365, 'name': '年度会员'}
 }
+
+# CDN配置
+CDN_ENABLED = True  # 是否启用CDN
+CDN_BASE_URL = 'https://cdn.example.com'  # CDN基础URL
+CDN_VIDEO_PATH = '/videos'  # CDN视频路径
+
+# 安全配置
+SECURITY_TOKEN_EXPIRE_MINUTES = 30  # Token过期时间（分钟）
+SECURITY_REFERRER_CHECK = True  # 是否检查Referrer
+SECURITY_ALLOWED_REFERRERS = ['https://example.com', 'https://www.example.com']  # 允许的Referrer

@@ -72,8 +72,13 @@ def get_user_session(request):
         user_session.is_premium = current_user.is_premium_active()
     
     return user_session
-
 # ==================== P0阶段 - 核心API ====================
+
+# 安全配置
+SECURITY_TOKEN_EXPIRE_MINUTES = 30  # Token过期时间（分钟）
+SECURITY_REFERRER_CHECK = True  # 是否检查Referrer
+SECURITY_ALLOWED_REFERRERS = ['https://example.com', 'https://www.example.com']  # 允许的Referrer
+
 
 def decode_frame_from_file(filepath, frame_idx):
     """从文件中解码单帧的辅助函数"""
@@ -184,6 +189,12 @@ def get_video_frame(filename, frame_idx):
     if not filename:
         return jsonify({'error': '缺少文件名'}), 400
     
+    # 检查Referrer
+    if app.config.get('SECURITY_REFERRER_CHECK', False):
+        referrer = request.referrer
+        if referrer and not any(allowed in referrer for allowed in app.config.get('SECURITY_ALLOWED_REFERRERS', [])):
+            return jsonify({'error': '无效的Referrer'}), 403
+    
     filepath = os.path.join(app.config['VIDEO_FOLDER'], filename)
     
     # 检查文件是否存在
@@ -240,6 +251,12 @@ def get_video_frames(filename, start, end):
     # 安全检查文件名
     if not filename:
         return jsonify({'error': '缺少文件名'}), 400
+    
+    # 检查Referrer
+    if app.config.get('SECURITY_REFERRER_CHECK', False):
+        referrer = request.referrer
+        if referrer and not any(allowed in referrer for allowed in app.config.get('SECURITY_ALLOWED_REFERRERS', [])):
+            return jsonify({'error': '无效的Referrer'}), 403
     
     filepath = os.path.join(app.config['VIDEO_FOLDER'], filename)
     
@@ -418,6 +435,12 @@ def api_videos():
 @app.route('/api/video/<filename>/info')
 def api_video_info(filename):
     """API - 获取视频信息"""
+    # 检查Referrer
+    if app.config.get('SECURITY_REFERRER_CHECK', False):
+        referrer = request.referrer
+        if referrer and not any(allowed in referrer for allowed in app.config.get('SECURITY_ALLOWED_REFERRERS', [])):
+            return jsonify({'error': '无效的Referrer'}), 403
+    
     filepath = os.path.join(app.config['VIDEO_FOLDER'], filename)
     
     if not os.path.exists(filepath):
@@ -438,6 +461,12 @@ def api_video_info(filename):
 @app.route('/videos/<filename>')
 def serve_video(filename):
     """提供视频文件访问"""
+    # 检查Referrer
+    if app.config.get('SECURITY_REFERRER_CHECK', False):
+        referrer = request.referrer
+        if referrer and not any(allowed in referrer for allowed in app.config.get('SECURITY_ALLOWED_REFERRERS', [])):
+            return jsonify({'error': '无效的Referrer'}), 403
+    
     return send_from_directory(app.config['VIDEO_FOLDER'], filename)
 
 

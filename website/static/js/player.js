@@ -81,6 +81,12 @@ class BananaPlayer {
                 throw new Error(infoData.error);
             }
             
+            // 检查CDN配置
+            if (window.CDN_ENABLED) {
+                this.useCDN = true;
+                this.cdnBaseUrl = window.CDN_BASE_URL;
+            }
+            
             this.fps = infoData.info.fps || 30;
             this.totalFrames = infoData.info.frame_count || 0;
             this.frameInterval = 1000 / this.fps;
@@ -117,7 +123,10 @@ class BananaPlayer {
             const end = Math.min(start + batchSize, maxFramesToLoad);
             
             try {
-                const response = await fetch(`/api/video/${filename}/frames/${start}/${end}`);
+                // 使用CDN URL（如果启用）
+                let apiUrl = this.useCDN ? `${this.cdnBaseUrl}/api/video/${filename}/frames/${start}/${end}` : `/api/video/${filename}/frames/${start}/${end}`;
+                
+                const response = await fetch(apiUrl);
                 const data = await response.json();
                 
                 if (data.error) {

@@ -6,6 +6,11 @@
     <title>{% block title %}Banana Player{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <script>
+        // 全局配置
+        window.CDN_ENABLED = {{ config.CDN_ENABLED|tojson }};
+        window.CDN_BASE_URL = '{{ config.CDN_BASE_URL }}';
+    </script>
 </head>
 <body>
     <!-- 顶部导航栏 -->
