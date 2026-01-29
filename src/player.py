@@ -9,6 +9,9 @@ from PIL import Image, ImageTk
 import os
 import threading
 import time
+import tempfile
+import wave
+import subprocess
 from .config import PinkConfig
 from .license_manager import LicenseManager
 from .codec import BANCodec

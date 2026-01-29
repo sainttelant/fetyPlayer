@@ -61,11 +61,23 @@ class PinkConfig:
 
     # ==================== .ban格式设置 ====================
 
-    BAN_MAGIC_NUMBER = b'BAN1'
+    BAN_MAGIC_NUMBER = b'BAN2'  # 更新版本号以支持音频
 
     BAN_EXTENSION = ".ban"
 
     JPEG_QUALITY = 85
+
+    # ==================== 音频设置 ====================
+
+    AUDIO_ENABLED = True
+
+    AUDIO_SAMPLE_RATE = 44100
+
+    AUDIO_CHANNELS = 2
+
+    AUDIO_CHUNK_SIZE = 1024
+
+    AUDIO_FORMAT = 'pcm_s16le'
 
     # ==================== 支持的输入格式 ====================
 

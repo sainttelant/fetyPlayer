@@ -1,6 +1,7 @@
 """
 🎀 .ban格式视频编解码器
 自定义视频格式的编码和解码（强加密版）
+支持音频功能
 """
 import cv2
 import numpy as np
@@ -9,6 +10,9 @@ import os
 import hashlib
 import secrets
 import json
+import wave
+import tempfile
+import subprocess
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -90,6 +94,61 @@ def calculate_checksum(data):
     """计算数据校验和"""
     return hashlib.sha256(data).digest()[:16]
 
+def extract_audio_from_video(video_path):
+    """从视频中提取音频并保存为WAV格式
+    
+    Args:
+        video_path: 输入视频路径
+        
+    Returns:
+        tuple: (audio_data: bytes, audio_info: dict) 或 (None, None) 如果没有音频
+    """
+    try:
+        # 使用ffmpeg提取音频
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+            temp_audio_path = temp_audio.name
+        
+        # 使用ffmpeg提取音频到WAV文件
+        cmd = [
+            'ffmpeg', '-i', video_path, 
+            '-ac', str(PinkConfig.AUDIO_CHANNELS),
+            '-ar', str(PinkConfig.AUDIO_SAMPLE_RATE),
+            '-f', 'wav',
+            '-y', temp_audio_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0 and os.path.exists(temp_audio_path):
+            # 读取WAV文件
+            with open(temp_audio_path, 'rb') as f:
+                audio_data = f.read()
+            
+            # 获取音频信息
+            with wave.open(temp_audio_path, 'r') as wav_file:
+                audio_info = {
+                    'channels': wav_file.getnchannels(),
+                    'sample_width': wav_file.getsampwidth(),
+                    'frame_rate': wav_file.getframerate(),
+                    'n_frames': wav_file.getnframes(),
+                    'compression_type': wav_file.getcomptype(),
+                    'compression_name': wav_file.getcompname()
+                }
+            
+            # 清理临时文件
+            os.unlink(temp_audio_path)
+            
+            return audio_data, audio_info
+        else:
+            # 清理临时文件
+            if os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+            return None, None
+            
+    except Exception as e:
+        print(f"音频提取失败: {e}")
+        return None, None
+
 class BANCodec:
     """BAN格式编解码器"""
     @staticmethod
@@ -112,6 +171,10 @@ class BANCodec:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # 提取音频数据
+        audio_data, audio_info = extract_audio_from_video(input_path)
+        has_audio = audio_data is not None
         
         # 生成随机盐值和IV
         salt = secrets.token_bytes(32)
@@ -137,6 +200,15 @@ class BANCodec:
                 
                 # 写入IV（已混淆）
                 f.write(obfuscate_data(iv))
+                
+                # 写入音频信息（如果存在音频）
+                if has_audio:
+                    # 音频标志位和音频数据大小
+                    f.write(struct.pack('?I', True, len(audio_data)))
+                    # 写入音频数据
+                    f.write(audio_data)
+                else:
+                    f.write(struct.pack('?I', False, 0))
                 
                 # 预留头部空间（16字节：4字节fps, 4字节width, 4字节height, 4字节frames）
                 header_pos = f.tell()
@@ -229,6 +301,13 @@ class BANCodec:
                 salt = deobfuscate_data(f.read(32))
                 iv = deobfuscate_data(f.read(16))
                 
+                # 读取音频信息
+                has_audio = struct.unpack('?', f.read(1))[0]
+                audio_size = struct.unpack('I', f.read(4))[0]
+                
+                if has_audio and audio_size > 0:
+                    audio_data = f.read(audio_size)
+                
                 # 读取元数据
                 header_data = f.read(16)
                 fps, width, height, frame_count = struct.unpack('IIII', header_data)
@@ -236,7 +315,9 @@ class BANCodec:
                     'fps': fps,
                     'width': width,
                     'height': height,
-                    'frame_count': frame_count
+                    'frame_count': frame_count,
+                    'has_audio': has_audio,
+                    'audio_size': audio_size
                 }
                 
                 # 重建主密钥
@@ -351,6 +432,12 @@ class BANCodec:
                 salt = deobfuscate_data(f.read(32))
                 iv = deobfuscate_data(f.read(16))
                 
+                # 跳过音频信息
+                has_audio = struct.unpack('?', f.read(1))[0]
+                audio_size = struct.unpack('I', f.read(4))[0]
+                if has_audio and audio_size > 0:
+                    f.read(audio_size)
+                
                 # 读取元数据
                 header_data = f.read(16)
                 fps, width, height, frame_count = struct.unpack('IIII', header_data)
@@ -456,6 +543,14 @@ class BANCodec:
                 f.read(32)  # salt
                 f.read(16)  # iv
                 
+                # 读取音频信息
+                has_audio = struct.unpack('?', f.read(1))[0]
+                audio_size = struct.unpack('I', f.read(4))[0]
+                
+                # 跳过音频数据
+                if has_audio and audio_size > 0:
+                    f.read(audio_size)
+                
                 # 读取元数据（未混淆）
                 header_data = f.read(16)
                 fps, width, height, frame_count = struct.unpack('IIII', header_data)
@@ -464,7 +559,9 @@ class BANCodec:
                     'width': width,
                     'height': height,
                     'frame_count': frame_count,
-                    'duration': frame_count / fps if fps > 0 else 0
+                    'duration': frame_count / fps if fps > 0 else 0,
+                    'has_audio': has_audio,
+                    'audio_size': audio_size
                 }
         except Exception as e:
             raise Exception(f"无法读取视频信息: {str(e)}")
