@@ -11,7 +11,7 @@ import threading
 import time
 from .config import PinkConfig
 from .license_manager import LicenseManager
-from .codec import BANCodec
+from .simple_codec import SimpleBANCodec
 from .ui_components import RoundedFrame, RoundButton, create_heart_decoration
 from .frame_buffer import StreamingDecoder, FramePreloader
 
@@ -416,7 +416,7 @@ class BananaPlayerPink:
                     """在单独线程中执行转换"""
                     try:
                         self.info_label.config(text="Converting video... Please wait")
-                        BANCodec.encode_video(input_path, output_path, progress_callback=update_progress)
+                        SimpleBANCodec.encode_video(input_path, output_path, progress_callback=update_progress)
                         
                         # 转换完成
                         self.root.after(0, lambda: [
@@ -485,20 +485,25 @@ class BananaPlayerPink:
         """Display specified frame (from streaming decoder)"""
         if not self.decoder:
             return
-            
+
         if frame_idx < 0 or frame_idx >= self.metadata['frame_count']:
             return
 
         # 从流式解码器获取帧（自动从缓存或磁盘加载）
         frame = self.decoder.get_frame(frame_idx)
         if frame is None:
+            print(f"警告: 帧 {frame_idx} 解码失败")
             return
-            
+
         # 更新预加载器位置
         if self.preloader:
             self.preloader.update_position(frame_idx)
-            
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        try:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        except Exception as e:
+            print(f"错误: 无法转换帧 {frame_idx} 的颜色空间: {e}")
+            return
         
         # 获取当前画布大小
         canvas_w = self.canvas.winfo_width()

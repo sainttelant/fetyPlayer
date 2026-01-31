@@ -14,7 +14,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from src.codec import BANCodec
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from simple_codec import SimpleBANCodec
 import cv2
 import numpy as np
 
@@ -76,54 +79,43 @@ def get_user_session(request):
 # ==================== P0阶段 - 核心API ====================
 
 def decode_frame_from_file(filepath, frame_idx):
-    """从文件中解码单帧的辅助函数"""
+    """从文件中解码单帧的辅助函数（简化版）"""
+    import sys
+    import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from src.config import PinkConfig
-    from src.codec import decrypt_aes, calculate_checksum, ENCRYPTION_ENABLED, derive_key_from_salt, deobfuscate_data
+    from src.simple_codec import simple_decrypt
     import hashlib
     
     # 读取并解码单帧
     with open(filepath, 'rb') as f:
-        # 跳过文件头（magic, salt, iv）
-        magic = deobfuscate_data(f.read(4))
-        salt = deobfuscate_data(f.read(32))
-        iv = deobfuscate_data(f.read(16))
-        
-        # 派生加密密钥
-        master_key = derive_key_from_salt(salt)
+        # 跳过文件头（magic）
+        magic = f.read(4)
+        if magic != b'BAN1':
+            raise Exception(f'无效的.ban文件格式')
         
         # 跳过视频信息头
         f.read(16)
         
-        # 读取帧大小表
-        sizes_len = struct.unpack('I', f.read(4))[0]
-        encrypted_sizes = f.read(sizes_len)
-        
-        # 解密帧大小表
-        if ENCRYPTION_ENABLED:
-            sizes_packet = decrypt_aes(encrypted_sizes, master_key, iv)
-            if sizes_packet is None:
-                raise Exception(f'帧大小表解密失败，密钥长度={len(master_key)}, IV长度={len(iv)}, 数据长度={len(encrypted_sizes)}')
-        else:
-            sizes_packet = encrypted_sizes
-        
-        # 解析帧大小
-        sizes_data_bytes = sizes_packet[16:]
-        frame_sizes = [int(s) for s in sizes_data_bytes[4:].decode('utf-8').split(',') if s]
-        
-        # 计算帧数据起始位置
-        frame_data_offset = f.tell()
+        # 生成固定密钥（简化版）
+        key = hashlib.sha256(b'BananaPlayerSimpleKey2024').digest()
         
         # 计算目标帧位置
-        offset = frame_data_offset
+        offset = 4 + 16  # magic + header
         for i in range(frame_idx):
-            if i >= len(frame_sizes):
-                raise IndexError(f"帧索引超出范围: {frame_idx} >= {len(frame_sizes)}")
-            offset += frame_sizes[i]
+            size_data = f.read(4)
+            if len(size_data) < 4:
+                raise IndexError(f"帧索引超出范围")
+            frame_size = struct.unpack('I', size_data)[0]
+            offset += 4 + frame_size
         
         # 读取并解密目标帧
         f.seek(offset)
-        frame_size = frame_sizes[frame_idx]
+        size_data = f.read(4)
+        if len(size_data) < 4:
+            raise Exception("帧大小数据不完整")
+        frame_size = struct.unpack('I', size_data)[0]
+        
         if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
             raise Exception(f"无效的帧大小: {frame_size}")
         
@@ -131,20 +123,13 @@ def decode_frame_from_file(filepath, frame_idx):
         if len(encrypted_frame) < frame_size:
             raise Exception("帧数据不完整")
         
-        # 解密帧
-        if ENCRYPTION_ENABLED:
-            frame_packet = decrypt_aes(encrypted_frame, master_key, iv)
-        else:
-            frame_packet = encrypted_frame
-        
+        # 解密帧（简化版）
+        frame_packet = simple_decrypt(encrypted_frame, key)
         if not frame_packet:
             raise Exception('帧解密失败')
         
-        # 验证校验和
-        frame_checksum = frame_packet[4:20]
-        frame_data = frame_packet[20:]
-        if calculate_checksum(frame_data) != frame_checksum:
-            raise Exception('帧数据校验失败')
+        # 解析帧序号
+        frame_data = frame_packet[4:]
         
         # 解码帧
         nparr = np.frombuffer(frame_data, np.uint8)
@@ -197,7 +182,7 @@ def get_video_frame(filename, frame_idx):
     
     # 获取视频信息
     try:
-        info = BANCodec.get_video_info(filepath)
+        info = SimpleBANCodec.get_video_info(filepath)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -254,7 +239,7 @@ def get_video_frames(filename, start, end):
     
     # 获取视频信息
     try:
-        info = BANCodec.get_video_info(filepath)
+        info = SimpleBANCodec.get_video_info(filepath)
     except Exception as e:
         return jsonify({'error': f'无法读取视频信息: {str(e)}'}), 500
     
@@ -324,7 +309,7 @@ def get_videos_list():
                 ext = filename.lower().split('.')[-1]
                 if ext == 'ban':
                     try:
-                        info = BANCodec.get_video_info(filepath)
+                        info = SimpleBANCodec.get_video_info(filepath)
                         videos.append({
                             'filename': filename,
                             'name': os.path.splitext(filename)[0],
@@ -376,7 +361,7 @@ def upload():
             if filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv')):
                 try:
                     ban_path = os.path.splitext(filepath)[0] + '.ban'
-                    BANCodec.encode_video(filepath, ban_path)
+                    SimpleBANCodec.encode_video(filepath, ban_path)
                     os.remove(filepath)  # 删除原始文件
                     flash(f'视频已转换为 .ban 格式', 'success')
                 except Exception as e:
@@ -427,7 +412,7 @@ def api_video_info(filename):
     
     if ext == 'ban':
         try:
-            info = BANCodec.get_video_info(filepath)
+            info = SimpleBANCodec.get_video_info(filepath)
             return jsonify({'info': info, 'filename': filename})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -501,7 +486,7 @@ def watch(filename):
     
     if ext == 'ban':
         try:
-            info = BANCodec.get_video_info(filepath)
+            info = SimpleBANCodec.get_video_info(filepath)
             return render_template('watch.html',
                                   filename=filename,
                                   video_info=info)

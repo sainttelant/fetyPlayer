@@ -109,7 +109,8 @@ class PinkConfig:
 
     # ==================== 字体设置 ====================
     # 使用系统可用的中文字体，优先选择顺序
-    FONT_FAMILY = ('WenQuanYi Micro Hei', 'Noto Sans CJK SC', 'Droid Sans Fallback', 'SimHei', 'Microsoft YaHei UI', 'Arial', 'sans-serif')
+    # tkinter字体只接受单个字体名称，不能传递元组
+    FONT_FAMILY = 'Microsoft YaHei'
 
     FONT_TITLE = (FONT_FAMILY, 24, 'bold')
 

@@ -7,13 +7,13 @@ __description__ = "粉红少女风格视频播放器"
 from .player import BananaPlayerPink
 from .config import PinkConfig
 from .license_manager import LicenseManager
-from .codec import BANCodec
+from .simple_codec import SimpleBANCodec
 from .ui_components import RoundedFrame, RoundButton, create_heart_decoration
 __all__ = [
    'BananaPlayerPink',
    'PinkConfig',
    'LicenseManager',
-   'BANCodec',
+   'SimpleBANCodec',
    'RoundedFrame',
    'RoundButton',
    'create_heart_decoration'

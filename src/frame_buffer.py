@@ -153,53 +153,46 @@ class StreamingDecoder:
         self._load_metadata()
         
     def _load_metadata(self):
-        """Load metadata and frame size table from .ban file"""
-        from .codec import deobfuscate_data, decrypt_aes, calculate_checksum, derive_key_from_content, ENCRYPTION_ENABLED, PinkConfig
+        """Load metadata from .ban file (简化版)"""
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from src.simple_codec import SimpleBANCodec
+        from .config import PinkConfig
         import struct
-        
-        with open(self.ban_path, 'rb') as f:
-            # Read and verify magic number
-            magic = deobfuscate_data(f.read(4))
-            if magic != PinkConfig.BAN_MAGIC_NUMBER:
-                raise Exception("Invalid .ban file format")
-            
-            # Read salt and IV
-            salt = deobfuscate_data(f.read(32))
-            iv = deobfuscate_data(f.read(16))
-            self.salt = salt
-            self.iv = iv
-            
-            # Read metadata
-            header_data = f.read(16)
-            fps, width, height, frame_count = struct.unpack('IIII', header_data)
-            self.metadata = {
-                'fps': fps,
-                'width': width,
-                'height': height,
-                'frame_count': frame_count
-            }
-            
-            # Derive key
-            import hashlib
-            seed = PinkConfig.BAN_MAGIC_NUMBER + salt + PinkConfig.APP_NAME.encode()
-            self.master_key = hashlib.pbkdf2_hmac('sha256', seed, b'BananaKeyDerivation', 100000, 32)
-            
-            # Read frame size table
-            sizes_len = struct.unpack('I', f.read(4))[0]
-            encrypted_sizes = f.read(sizes_len)
-            
-            # Decrypt frame size table
-            if ENCRYPTION_ENABLED:
-                sizes_packet = decrypt_aes(encrypted_sizes, self.master_key, self.iv)
-            else:
-                sizes_packet = encrypted_sizes
-            
-            # Parse frame sizes
-            sizes_data_bytes = sizes_packet[16:]
-            self.frame_sizes = [int(s) for s in sizes_data_bytes[4:].decode('utf-8').split(',') if s]
-            
-            # Store offset for frame data
-            self.frame_data_offset = f.tell()
+
+        try:
+            with open(self.ban_path, 'rb') as f:
+                # Read and verify magic number
+                magic = f.read(4)
+                if magic != b'BAN1':
+                    raise Exception(f"无效的.ban文件格式: 魔数不匹配")
+
+                # Read metadata
+                header_data = f.read(16)
+                if len(header_data) < 16:
+                    raise Exception("文件头数据不完整")
+                fps, width, height, frame_count = struct.unpack('IIII', header_data)
+                self.metadata = {
+                    'fps': fps,
+                    'width': width,
+                    'height': height,
+                    'frame_count': frame_count
+                }
+
+                # 简化版格式：帧大小和帧数据交错存储，不需要单独的帧大小表
+                # 我们在解码时动态读取帧大小
+                self.frame_sizes = []  # 留空，按需读取
+
+                # Store offset for frame data (after header)
+                self.frame_data_offset = f.tell()
+
+                print(f"✅ 元数据加载成功: {frame_count} 帧, {width}x{height}, {fps} FPS")
+        except Exception as e:
+            print(f"❌ 加载元数据失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def get_frame(self, frame_idx: int) -> Optional[np.ndarray]:
         """
@@ -226,58 +219,88 @@ class StreamingDecoder:
     
     def _decode_frame_at(self, frame_idx: int) -> Optional[np.ndarray]:
         """
-        Decode specific frame from file
+        Decode specific frame from file (简化版)
         Args:
             frame_idx: Frame index
         Returns:
             Decoded frame or None
         """
-        from .codec import decrypt_aes, calculate_checksum, ENCRYPTION_ENABLED
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from src.simple_codec import simple_decrypt
+        from .config import PinkConfig
+        import hashlib
         import struct
-        
+
         try:
+            # 生成固定密钥（简化版）
+            key = hashlib.sha256(b'BananaPlayerSimpleKey2024').digest()
+
             with open(self.ban_path, 'rb') as f:
-                # Calculate position of requested frame
-                offset = self.frame_data_offset
+                # Seek to frame data start
+                f.seek(self.frame_data_offset)
+
+                # Skip frames before the target frame
                 for i in range(frame_idx):
-                    if i >= len(self.frame_sizes):
+                    # Read frame size
+                    size_data = f.read(4)
+                    if len(size_data) < 4:
+                        print(f"错误: 在跳过帧 {i} 时遇到文件结束")
                         return None
-                    offset += self.frame_sizes[i]
-                
-                # Seek to frame position
-                f.seek(offset)
-                
-                # Read encrypted frame
-                frame_size = self.frame_sizes[frame_idx] if frame_idx < len(self.frame_sizes) else 0
-                if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
+
+                    frame_size = struct.unpack('I', size_data)[0]
+                    if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
+                        print(f"错误: 帧 {i} 的大小无效: {frame_size}")
+                        return None
+
+                    # Skip frame data
+                    f.seek(frame_size, 1)  # 相对当前位置跳过
+
+                # Now at target frame position
+                # Read frame size
+                size_data = f.read(4)
+                if len(size_data) < 4:
+                    print(f"错误: 帧 {frame_idx} 大小数据不完整")
                     return None
-                
+
+                frame_size = struct.unpack('I', size_data)[0]
+                if frame_size <= 0 or frame_size > 50 * 1024 * 1024:
+                    print(f"错误: 帧 {frame_idx} 的大小无效: {frame_size}")
+                    return None
+
+                # Read encrypted frame
                 encrypted_frame = f.read(frame_size)
                 if len(encrypted_frame) < frame_size:
+                    print(f"错误: 帧 {frame_idx} 数据不完整 (期望: {frame_size}, 实际: {len(encrypted_frame)})")
                     return None
-                
-                # Decrypt frame
-                if ENCRYPTION_ENABLED:
-                    frame_packet = decrypt_aes(encrypted_frame, self.master_key, self.iv)
-                else:
-                    frame_packet = encrypted_frame
-                
+
+                # Decrypt frame (简化版)
+                frame_packet = simple_decrypt(encrypted_frame, key)
                 if not frame_packet:
+                    print(f"错误: 帧 {frame_idx} 解密失败")
                     return None
-                
-                # Verify checksum
-                frame_checksum = frame_packet[4:20]
-                frame_data = frame_packet[20:]
-                if calculate_checksum(frame_data) != frame_checksum:
+
+                # Parse frame index
+                if len(frame_packet) < 4:
+                    print(f"错误: 帧 {frame_idx} 数据包太短: {len(frame_packet)}")
                     return None
-                
+
+                frame_data = frame_packet[4:]
+
                 # Decode frame
                 nparr = np.frombuffer(frame_data, np.uint8)
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                
+
+                if frame is None:
+                    print(f"错误: 帧 {frame_idx} JPEG解码失败")
+                    return None
+
                 return frame
         except Exception as e:
-            print(f"Error decoding frame {frame_idx}: {e}")
+            print(f"错误: 解码帧 {frame_idx} 时发生异常: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def preload_frames(self, current_idx: int, preload_ahead: int = 30):

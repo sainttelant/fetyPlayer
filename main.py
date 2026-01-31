@@ -49,7 +49,8 @@ def main():
     root = tk.Tk()
     
     # Set Tkinter font encoding (key step for Chinese display)
-    root.option_add('*Font', get_system_font())
+    # Note: option_add('*Font', ...) expects a font tuple, not a single string
+    # We set the default font in the config module instead
     
     # Try to set window icon
     try:
