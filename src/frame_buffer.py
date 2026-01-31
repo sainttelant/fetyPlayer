@@ -150,6 +150,7 @@ class StreamingDecoder:
         self.frame_sizes = []
         self.file_handle = None
         self.frame_data_offset = 0
+        self.audio_data = None
         self._load_metadata()
         
     def _load_metadata(self):
@@ -180,11 +181,29 @@ class StreamingDecoder:
                     'frame_count': frame_count
                 }
 
+                # Read audio data length and audio data
+                audio_size_data = f.read(4)
+                if len(audio_size_data) < 4:
+                    raise Exception("音频数据长度不完整")
+                audio_size = struct.unpack('I', audio_size_data)[0]
+                
+                if audio_size > 0:
+                    self.audio_data = f.read(audio_size)
+                    if len(self.audio_data) < audio_size:
+                        print(f"警告: 音频数据不完整 (期望: {audio_size}, 实际: {len(self.audio_data)})")
+                    else:
+                        print(f"✅ 音频数据加载成功: {len(self.audio_data)} 字节")
+                        self.metadata['has_audio'] = True
+                else:
+                    self.audio_data = None
+                    self.metadata['has_audio'] = False
+                    print("ℹ️  无音频数据")
+
                 # 简化版格式：帧大小和帧数据交错存储，不需要单独的帧大小表
                 # 我们在解码时动态读取帧大小
                 self.frame_sizes = []  # 留空，按需读取
 
-                # Store offset for frame data (after header)
+                # Store offset for frame data (after header and audio)
                 self.frame_data_offset = f.tell()
 
                 print(f"✅ 元数据加载成功: {frame_count} 帧, {width}x{height}, {fps} FPS")
@@ -325,6 +344,14 @@ class StreamingDecoder:
             'metadata': self.metadata,
             'buffer_stats': buffer_stats
         }
+    
+    def get_audio_data(self) -> bytes:
+        """Get audio data from .ban file
+        
+        Returns:
+            bytes: Audio data in WAV format, or None if no audio
+        """
+        return self.audio_data
 
 
 class FramePreloader:

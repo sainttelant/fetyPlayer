@@ -9,6 +9,8 @@ from PIL import Image, ImageTk
 import os
 import threading
 import time
+import pygame
+import tempfile
 from .config import PinkConfig
 from .license_manager import LicenseManager
 from .simple_codec import SimpleBANCodec
@@ -26,6 +28,15 @@ class BananaPlayerPink:
         self.root.title(PinkConfig.APP_NAME)
         self.root.geometry(f"{PinkConfig.WINDOW_WIDTH}x{PinkConfig.WINDOW_HEIGHT}")
         self.root.minsize(800, 600)  # 设置最小尺寸
+        
+        # Initialize pygame mixer for audio
+        try:
+            pygame.mixer.init()
+            self.audio_enabled = True
+        except Exception as e:
+            print(f"音频初始化失败: {e}")
+            self.audio_enabled = False
+        
         # Set gradient background
         self.setup_gradient_background()
         # Create menu bar
@@ -44,6 +55,13 @@ class BananaPlayerPink:
         self.original_video_size = None  # Store original video resolution
         self.control_frame = None  # Control panel frame
         self.inner_frame = None  # Inner frame for controls
+        
+        # Audio state variables
+        self.audio_file = None  # Temporary audio file path
+        self.audio_sound = None  # Pygame Sound object
+        self.audio_volume = 0.7  # Default volume (0.0 to 1.0)
+        self.audio_muted = False
+        
         # Create UI
         self.setup_ui()
         # Check license status
@@ -188,6 +206,139 @@ class BananaPlayerPink:
         self.canvas = tk.Canvas(canvas_container, bg=PinkConfig.BLACK, highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
+    def _load_audio(self):
+        """加载音频数据"""
+        if not self.audio_enabled or not self.decoder:
+            return
+        
+        try:
+            audio_data = self.decoder.get_audio_data()
+            if audio_data:
+                # 创建临时音频文件
+                if self.audio_file and os.path.exists(self.audio_file):
+                    try:
+                        os.unlink(self.audio_file)
+                    except:
+                        pass
+                
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+                    self.audio_file = temp_audio.name
+                    temp_audio.write(audio_data)
+                
+                # 尝试加载音频到 pygame mixer
+                try:
+                    pygame.mixer.music.load(self.audio_file)
+                    pygame.mixer.music.set_volume(self.audio_volume)
+                    print(f"✅ 音频加载成功: {self.audio_file}")
+                except Exception as e:
+                    print(f"❌ pygame mixer 加载失败: {e}")
+                    # 尝试使用 sound 对象代替
+                    try:
+                        self.audio_sound = pygame.mixer.Sound(self.audio_file)
+                        print(f"✅ 音频加载成功 (使用 Sound): {self.audio_file}")
+                    except Exception as e2:
+                        print(f"❌ Sound 加载也失败: {e2}")
+                        self.audio_file = None
+            else:
+                print("ℹ️  无音频数据")
+        except Exception as e:
+            print(f"❌ 音频加载失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _play_audio(self):
+        """播放音频"""
+        if not self.audio_enabled:
+            return
+        
+        try:
+            # 优先使用 music
+            if self.audio_file:
+                if not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.play()
+            # 如果有 sound 对象，使用 sound
+            elif hasattr(self, 'audio_sound') and self.audio_sound:
+                self.audio_sound.play(loops=-1)  # 循环播放
+        except Exception as e:
+            print(f"❌ 音频播放失败: {e}")
+    
+    def _pause_audio(self):
+        """暂停音频"""
+        if not self.audio_enabled:
+            return
+        
+        try:
+            if self.audio_file:
+                if pygame.mixer.music.get_busy():
+                    pygame.mixer.music.pause()
+            elif hasattr(self, 'audio_sound') and self.audio_sound:
+                self.audio_sound.stop()
+        except Exception as e:
+            print(f"❌ 音频暂停失败: {e}")
+    
+    def _resume_audio(self):
+        """恢复音频播放"""
+        if not self.audio_enabled:
+            return
+        
+        try:
+            if self.audio_file:
+                pygame.mixer.music.unpause()
+            elif hasattr(self, 'audio_sound') and self.audio_sound:
+                self.audio_sound.play(loops=-1)
+        except Exception as e:
+            print(f"❌ 音频恢复失败: {e}")
+    
+    def _stop_audio(self):
+        """停止音频"""
+        if not self.audio_enabled:
+            return
+        
+        try:
+            if self.audio_file:
+                pygame.mixer.music.stop()
+            elif hasattr(self, 'audio_sound') and self.audio_sound:
+                self.audio_sound.stop()
+        except Exception as e:
+            print(f"❌ 音频停止失败: {e}")
+    
+    def _set_volume(self, volume):
+        """设置音量
+        Args:
+            volume: 音量值 (0.0 到 1.0)
+        """
+        if not self.audio_enabled:
+            return
+        
+        self.audio_volume = max(0.0, min(1.0, volume))
+        
+        # 设置 music 音量
+        if self.audio_file:
+            pygame.mixer.music.set_volume(self.audio_volume)
+        # 设置 sound 音量
+        elif hasattr(self, 'audio_sound') and self.audio_sound:
+            self.audio_sound.set_volume(self.audio_volume)
+    
+    def _toggle_mute(self):
+        """切换静音状态"""
+        if not self.audio_enabled:
+            return
+        
+        self.audio_muted = not self.audio_muted
+        
+        if self.audio_muted:
+            if self.audio_file:
+                pygame.mixer.music.set_volume(0.0)
+            elif hasattr(self, 'audio_sound') and self.audio_sound:
+                self.audio_sound.set_volume(0.0)
+        else:
+            if self.audio_file:
+                pygame.mixer.music.set_volume(self.audio_volume)
+            elif hasattr(self, 'audio_sound') and self.audio_sound:
+                self.audio_sound.set_volume(self.audio_volume)
+        
+        return self.audio_muted
+    
     def create_controls(self, parent):
         """Create control panel"""
         # 创建圆角外框（用于装饰）
@@ -234,12 +385,27 @@ class BananaPlayerPink:
                                    bg=PinkConfig.CREAM, fg=PinkConfig.PINK_DARK)
         self.time_label.grid(row=0, column=3, padx=10, pady=10)
         
+        # Sound button
+        self.sound_btn = RoundButton(inner_frame, "[ 🔊 ]",
+                                    command=self.toggle_mute, width=80, height=35)
+        self.sound_btn.grid(row=0, column=4, padx=10, pady=10)
+        
+        # Volume slider
+        volume_frame = tk.Frame(inner_frame, bg=PinkConfig.CREAM)
+        volume_frame.grid(row=0, column=5, padx=10, pady=10, sticky="ew")
+        
+        self.volume_scale = ttk.Scale(volume_frame, from_=0, to=100, orient=tk.HORIZONTAL,
+                                     command=self.on_volume_change)
+        self.volume_scale.set(70)  # Default volume 70%
+        self.volume_scale.pack(fill=tk.X, expand=True)
+        
         # Store references
         self.control_frame = control_frame
         self.inner_frame = inner_frame
         
         # Configure column weights
         inner_frame.columnconfigure(2, weight=1)
+        inner_frame.columnconfigure(5, weight=0)
         
         # Custom progress bar style
         self._style_progress_bar()
@@ -334,6 +500,9 @@ class BananaPlayerPink:
                 self.info_label.config(text="Loading video metadata...")
                 self.root.update()
                 
+                # 停止当前音频
+                self._stop_audio()
+                
                 # 使用流式解码器替代原有方法
                 self.decoder = StreamingDecoder(
                     file_path, 
@@ -350,15 +519,20 @@ class BananaPlayerPink:
                     messagebox.showerror("Error", "No valid video data in file!")
                     self.info_label.config(text="Error: No valid video")
                     return
+                
+                # 加载音频
+                self._load_audio()
                     
                 self.current_video = file_path
                 self.current_frame_idx = 0
                 self.progress.config(to=self.metadata['frame_count']-1)
                 
                 # 显示视频信息
+                audio_info = " | Audio: Yes" if self.metadata.get('has_audio', False) else " | Audio: No"
                 info_text = (f"Loaded: {os.path.basename(file_path)} | "
                            f"{self.metadata['width']}x{self.metadata['height']} | "
-                           f"{self.metadata['fps']} FPS | {self.metadata['frame_count']} frames")
+                           f"{self.metadata['fps']} FPS | {self.metadata['frame_count']} frames"
+                           f"{audio_info}")
                 self.info_label.config(text=info_text)
                 
                 # 根据视频分辨率调整窗口大小
@@ -367,7 +541,7 @@ class BananaPlayerPink:
                 # 显示第一帧
                 self.display_frame(0, force=True)
                 
-                messagebox.showinfo("Success", f"Video loaded successfully!\n\nFile: {os.path.basename(file_path)}\nResolution: {self.metadata['width']}x{self.metadata['height']}\nFPS: {self.metadata['fps']} FPS\nFrames: {self.metadata['frame_count']}")
+                messagebox.showinfo("Success", f"Video loaded successfully!\n\nFile: {os.path.basename(file_path)}\nResolution: {self.metadata['width']}x{self.metadata['height']}\nFPS: {self.metadata['fps']} FPS\nFrames: {self.metadata['frame_count']}\nAudio: {'Yes' if self.metadata.get('has_audio', False) else 'No'}")
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Cannot open video: {str(e)}")
@@ -419,17 +593,18 @@ class BananaPlayerPink:
                         SimpleBANCodec.encode_video(input_path, output_path, progress_callback=update_progress)
                         
                         # 转换完成
-                        self.root.after(0, lambda: [
-                            progress_window.destroy(),
-                            self.info_label.config(text="Conversion complete!"),
+                        def on_success():
+                            progress_window.destroy()
+                            self.info_label.config(text="Conversion complete!")
                             messagebox.showinfo("Success", f"Video converted and encrypted successfully!\nSaved to: {output_path}")
-                        ])
+                        self.root.after(0, on_success)
                     except Exception as e:
-                        self.root.after(0, lambda: [
-                            progress_window.destroy(),
-                            self.info_label.config(text="Conversion failed"),
-                            messagebox.showerror("Error", f"Conversion failed: {str(e)}")
-                        ])
+                        error_msg = str(e)
+                        def on_error():
+                            progress_window.destroy()
+                            self.info_label.config(text="Conversion failed")
+                            messagebox.showerror("Error", f"Conversion failed: {error_msg}")
+                        self.root.after(0, on_error)
                 
                 # 在后台线程执行转换
                 thread = threading.Thread(target=do_conversion, daemon=True)
@@ -578,12 +753,33 @@ class BananaPlayerPink:
         if self.is_playing:
             self.play_btn.text = "[ Pause ]"
             self.play_btn.draw_button()
+            # 播放音频
+            self._play_audio()
             if self.play_thread is None or not self.play_thread.is_alive():
                 self.play_thread = threading.Thread(target=self._play_video, daemon=True)
                 self.play_thread.start()
         else:
             self.play_btn.text = "[ Play ]"
             self.play_btn.draw_button()
+            # 暂停音频
+            self._pause_audio()
+    
+    def toggle_mute(self):
+        """切换静音状态"""
+        if not self.audio_enabled:
+            return
+        
+        muted = self._toggle_mute()
+        if muted:
+            self.sound_btn.text = "[ 🔇 ]"
+        else:
+            self.sound_btn.text = "[ 🔊 ]"
+        self.sound_btn.draw_button()
+    
+    def on_volume_change(self, value):
+        """音量滑块回调"""
+        volume = float(value) / 100.0
+        self._set_volume(volume)
             
     def _play_video(self):
         """Play video thread"""
@@ -605,6 +801,8 @@ class BananaPlayerPink:
         if self.current_frame_idx >= self.metadata["frame_count"]:
             self.current_frame_idx = 0
             self.is_playing = False
+            # 停止音频
+            self._stop_audio()
             # Thread-safe UI update
             def update_button():
                 self.play_btn.text = "[ Play ]"
@@ -617,6 +815,8 @@ class BananaPlayerPink:
         self.current_frame_idx = 0
         self.play_btn.text = "[ Play ]"
         self.play_btn.draw_button()
+        # 停止音频
+        self._stop_audio()
         if self.decoder:
             self.display_frame(0)
             
@@ -626,6 +826,33 @@ class BananaPlayerPink:
             self.seeking = True
             self.current_frame_idx = int(float(value))
             self.display_frame(self.current_frame_idx)
+            
+            # 同步音频跳转（重新加载音频并跳转到指定位置）
+            if self.audio_enabled and self.metadata.get('has_audio', False):
+                try:
+                    # 计算音频跳转位置（秒）
+                    audio_position = self.current_frame_idx / self.metadata['fps']
+                    
+                    # 停止当前音频
+                    if self.audio_file:
+                        pygame.mixer.music.stop()
+                    elif hasattr(self, 'audio_sound') and self.audio_sound:
+                        self.audio_sound.stop()
+                    
+                    # 重新加载音频
+                    if self.audio_file:
+                        pygame.mixer.music.load(self.audio_file)
+                        pygame.mixer.music.set_volume(0.0 if self.audio_muted else self.audio_volume)
+                        # 跳转到指定位置（pygame mixer 不支持精确跳转，只能重新播放）
+                        if self.is_playing:
+                            pygame.mixer.music.play(start=audio_position)
+                    elif hasattr(self, 'audio_sound') and self.audio_sound:
+                        # Sound 对象不支持跳转，只能重新播放
+                        if self.is_playing:
+                            self.audio_sound.play(loops=-1)
+                except Exception as e:
+                    print(f"音频跳转失败: {e}")
+            
             self.seeking = False
             
     def activate_golden(self):

@@ -64,6 +64,8 @@ class SimpleBANCodec:
         简化版文件格式:
         [4字节] 魔数: "BAN1" (不混淆)
         [16字节] 头部: FPS, Width, Height, Frame Count
+        [4字节] 音频数据长度 (0表示无音频)
+        [N字节] 音频数据 (WAV格式，不加密)
         [N字节] 帧数据 (每帧: 4字节大小 + JPEG数据)
         [32字节] 文件校验和 (SHA256)
         """
@@ -83,6 +85,36 @@ class SimpleBANCodec:
         print(f"编码视频: {input_path}")
         print(f"  FPS: {fps}, 分辨率: {width}x{height}, 帧数: {frame_count}")
         
+        # 提取音频
+        audio_data = None
+        try:
+            from pydub import AudioSegment
+            import tempfile
+            import os
+            
+            # 使用pydub提取音频
+            audio = AudioSegment.from_file(input_path)
+            
+            # 转换为WAV格式（使用更兼容的参数）
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+                temp_audio_path = temp_audio.name
+                # 使用标准PCM格式，16位，44100Hz，单声道（更兼容）
+                audio.export(temp_audio_path, format='wav',
+                          codec='pcm_s16le',
+                          parameters=['-ar', '44100', '-ac', '1'])
+            
+            # 读取WAV数据
+            with open(temp_audio_path, 'rb') as f:
+                audio_data = f.read()
+            
+            # 删除临时文件
+            os.unlink(temp_audio_path)
+            
+            print(f"  音频提取成功: {len(audio_data)} 字节")
+        except Exception as e:
+            print(f"  音频提取失败: {e} (将创建无音频视频)")
+            audio_data = None
+        
         try:
             with open(output_path, 'wb') as f:
                 # 写入magic number (不混淆)
@@ -92,8 +124,14 @@ class SimpleBANCodec:
                 header_pos = f.tell()
                 f.write(struct.pack('IIII', fps, width, height, 0))
                 
+                # 写入音频数据长度和音频数据（不加密）
+                if audio_data:
+                    f.write(struct.pack('I', len(audio_data)))
+                    f.write(audio_data)
+                else:
+                    f.write(struct.pack('I', 0))
+                
                 # 读取并编码所有帧
-                frame_sizes = []
                 actual_frames = 0
                 
                 while True:
@@ -119,7 +157,6 @@ class SimpleBANCodec:
                     # 写入帧大小和加密数据
                     f.write(struct.pack('I', len(encrypted)))
                     f.write(encrypted)
-                    frame_sizes.append(len(encrypted))
                     
                     actual_frames += 1
                     
@@ -153,7 +190,7 @@ class SimpleBANCodec:
         """解密并解码.ban格式视频（简化版）
         
         Returns:
-            tuple: (metadata: dict, frames: list)
+            tuple: (metadata: dict, frames: list, audio_data: bytes or None)
         """
         try:
             with open(ban_path, 'rb') as f:
@@ -176,6 +213,20 @@ class SimpleBANCodec:
                 
                 print(f"解码视频: {ban_path}")
                 print(f"  FPS: {fps}, 分辨率: {width}x{height}, 帧数: {frame_count}")
+                
+                # 读取音频数据长度和音频数据
+                audio_size_data = f.read(4)
+                if len(audio_size_data) < 4:
+                    raise Exception("音频数据长度不完整")
+                audio_size = struct.unpack('I', audio_size_data)[0]
+                
+                audio_data = None
+                if audio_size > 0:
+                    audio_data = f.read(audio_size)
+                    if len(audio_data) < audio_size:
+                        print(f"警告: 音频数据不完整 (期望: {audio_size}, 实际: {len(audio_data)})")
+                    else:
+                        print(f"  音频数据: {len(audio_data)} 字节")
                 
                 # 生成固定密钥（简化版）
                 key = hashlib.sha256(b'BananaPlayerSimpleKey2024').digest()
@@ -240,7 +291,7 @@ class SimpleBANCodec:
                 
                 print(f"解码完成: {len(frames)} 帧")
                 
-                return metadata, frames
+                return metadata, frames, audio_data
         except Exception as e:
             raise Exception(f"解码失败: {str(e)}")
     
@@ -331,12 +382,21 @@ class SimpleBANCodec:
                 # 读取元数据
                 header_data = f.read(16)
                 fps, width, height, frame_count = struct.unpack('IIII', header_data)
+                
+                # 读取音频数据长度
+                audio_size_data = f.read(4)
+                if len(audio_size_data) < 4:
+                    raise Exception("音频数据长度不完整")
+                audio_size = struct.unpack('I', audio_size_data)[0]
+                
                 return {
                     'fps': fps,
                     'width': width,
                     'height': height,
                     'frame_count': frame_count,
-                    'duration': frame_count / fps if fps > 0 else 0
+                    'duration': frame_count / fps if fps > 0 else 0,
+                    'has_audio': audio_size > 0,
+                    'audio_size': audio_size
                 }
         except Exception as e:
             raise Exception(f"无法读取视频信息: {str(e)}")
